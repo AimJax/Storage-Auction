@@ -41,6 +41,9 @@ place file, is hand-editable, and Rojo never touches Workspace (see
   Initial Sync Priority = Client, then back to Server.
 - Argon in Edit mode only — disconnect before Play so runtime state
   (door/prompt/box changes) never syncs back to `map/`.
+- NEVER inline Studio instances into `map.project.json`. The map must stay a
+  `$path` reference to `map/`; inline trees serialize nothing to disk and
+  wrongly give Argon ownership of Baseplate/Camera.
 
 ### Server modules (`src/server/`)
 - `init.server.luau` — bootstrap: remotes, services, map, auction loop, players.
