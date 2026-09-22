@@ -157,12 +157,7 @@ function AuctionService.TryOpenContainer(player, containerId)
 	end
 	ContainerOpened[containerId] = true
 	InventoryService.AddItem(player, item)
-
-	if MapHandles and MapHandles.Containers[containerId] then
-		local box = MapHandles.Containers[containerId]
-		box:SetAttribute("Opened", true)
-		box.Transparency = 0.6
-	end
+	MapBuilder.MarkContainerOpened(MapHandles, containerId)
 
 	-- Push reveal UI to the opener.
 	local ev = Remotes:FindFirstChild(GameConfig.RemoteNames.ItemRevealed)
@@ -201,14 +196,20 @@ local function teleportWinnerInside()
 	if not player then
 		return
 	end
-	local char = player.Character
-	if not char then
+	MapBuilder.TeleportWinnerInside(MapHandles, player)
+end
+
+-- MUST run before the door/barrier closes on Cleanup. Nil-safe: does nothing
+-- if the winner left, died, or has no character (respawn is already outside).
+local function returnWinnerOutside()
+	if WinnerUserId == nil then
 		return
 	end
-	local root = char:FindFirstChild("HumanoidRootPart")
-	if root and MapHandles then
-		root.CFrame = CFrame.new(MapHandles.UnitCenter + Vector3.new(0, 5, 2))
+	local player = Players:GetPlayerByUserId(WinnerUserId)
+	if not player then
+		return
 	end
+	MapBuilder.TeleportPlayerOutside(MapHandles, player)
 end
 
 local function finishBidding()
@@ -278,7 +279,9 @@ local function stateLoop()
 		elseif State == "Sold" then
 			if timeLeft() <= 0 then
 				if WinnerUserId ~= nil then
-					MapBuilder.SetBarrier(MapHandles, false)
+					-- Door stays open; the barrier stays up so only the
+					-- teleported winner is inside. Prompts turn on for them.
+					MapBuilder.SetBarrier(MapHandles, true)
 					MapBuilder.SetPromptsEnabled(MapHandles, true)
 					teleportWinnerInside()
 					setState("Rummaging", GameConfig.RummageDuration)
@@ -298,6 +301,12 @@ local function stateLoop()
 				end
 			end
 			if allOpened or timeLeft() <= 0 then
+				-- Order matters: winner out FIRST, then prompts off and
+				-- door closes. Nobody is ever sealed inside.
+				returnWinnerOutside()
+				MapBuilder.SetPromptsEnabled(MapHandles, false)
+				MapBuilder.SetDoorOpen(MapHandles, false)
+				MapBuilder.SetBarrier(MapHandles, true)
 				setState("Cleanup", GameConfig.CleanupDuration)
 			end
 			task.wait(0.5)

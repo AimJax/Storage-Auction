@@ -15,7 +15,7 @@ local player = Players.LocalPlayer
 local remotes = nil
 local snapshot = { state = "Waiting", timeLeft = 0, currentBid = 0, bidder = "", minIncrement = 25, winner = "" }
 local cash = 0
-local inventory = {}
+local lastSeenBid = -1
 
 local function getRemote(name, className)
 	local r = remotes:FindFirstChild(name)
@@ -25,39 +25,64 @@ local function getRemote(name, className)
 	return r
 end
 
+local function formatMoney(n)
+	n = math.floor(tonumber(n) or 0)
+	local s = tostring(n)
+	local out = ""
+	while #s > 3 do
+		out = "," .. string.sub(s, -3) .. out
+		s = string.sub(s, 1, #s - 3)
+	end
+	return s .. out
+end
+
 function AuctionClient.Start()
 	remotes = ReplicatedStorage:WaitForChild(GameConfig.RemotesFolderName)
 	local refs = UIController.Build()
-	UIController.UpdateStatus(snapshot, cash)
+	UIController.UpdateStatus(snapshot, cash, player.Name)
 
 	-- Server -> client streams
 	getRemote(GameConfig.RemoteNames.AuctionState, "RemoteEvent").OnClientEvent:Connect(function(data)
-		if typeof(data) == "table" then
-			snapshot = data
-			UIController.UpdateStatus(snapshot, cash)
-			if snapshot.state == "Sold" and snapshot.winner and snapshot.winner ~= "" then
+		if typeof(data) ~= "table" then
+			return
+		end
+		local prevState = snapshot.state
+		snapshot = data
+		UIController.UpdateStatus(snapshot, cash, player.Name)
+		-- Toast rival bids as they happen (not on every broadcast tick).
+		if snapshot.state == "Bidding"
+			and (snapshot.currentBid or 0) > lastSeenBid
+			and (snapshot.bidder or "") ~= ""
+			and snapshot.bidder ~= player.Name
+		then
+			UIController.ShowToast(snapshot.bidder .. " bid $" .. formatMoney(snapshot.currentBid))
+		end
+		lastSeenBid = snapshot.currentBid or 0
+		if snapshot.state == "Sold" and prevState ~= "Sold" then
+			lastSeenBid = -1 -- reset for next auction
+			if snapshot.winner and snapshot.winner ~= "" then
 				if snapshot.winner == player.Name then
-					UIController.ShowMessage("YOU WON for $" .. tostring(snapshot.currentBid) .. "! Go rummage the unit!")
+					UIController.ShowToast("You won the unit for $" .. formatMoney(snapshot.currentBid) .. "!", 4)
 				else
-					UIController.ShowMessage(snapshot.winner .. " won for $" .. tostring(snapshot.currentBid) .. ". Next auction soon.")
+					UIController.ShowToast(snapshot.winner .. " won for $" .. formatMoney(snapshot.currentBid))
 				end
+			else
+				UIController.ShowToast("No winner this round")
 			end
 		end
 	end)
 	getRemote(GameConfig.RemoteNames.CashChanged, "RemoteEvent").OnClientEvent:Connect(function(amount)
 		cash = tonumber(amount) or 0
-		UIController.UpdateStatus(snapshot, cash)
+		UIController.UpdateStatus(snapshot, cash, player.Name)
 	end)
 	getRemote(GameConfig.RemoteNames.InventoryChanged, "RemoteEvent").OnClientEvent:Connect(function(items)
 		if typeof(items) == "table" then
-			inventory = items
-			UIController.UpdateInventory(inventory)
+			UIController.UpdateInventory(items)
 		end
 	end)
 	getRemote(GameConfig.RemoteNames.ItemRevealed, "RemoteEvent").OnClientEvent:Connect(function(item)
 		if typeof(item) == "table" then
 			UIController.ShowReveal(item)
-			UIController.ShowMessage("Found: " .. tostring(item.Name) .. " — Sell or Keep?")
 		end
 	end)
 
@@ -72,17 +97,22 @@ function AuctionClient.Start()
 			return fn:InvokeServer(amount)
 		end)
 		if ok and typeof(res) == "table" then
-			UIController.ShowMessage(tostring(res.message))
+			if res.ok then
+				lastSeenBid = amount -- don't toast our own bid back at ourselves
+				UIController.ShowToast("Your bid: $" .. formatMoney(amount))
+			else
+				UIController.ShowToast(tostring(res.message))
+			end
 			if res.snapshot then
 				snapshot = res.snapshot
-				UIController.UpdateStatus(snapshot, cash)
+				UIController.UpdateStatus(snapshot, cash, player.Name)
 			end
 		else
-			UIController.ShowMessage("Bid failed.")
+			UIController.ShowToast("Bid failed")
 		end
 	end)
 
-	-- Sell / Keep / Close
+	-- Sell / Keep (both auto-close the reveal panel)
 	refs.SellButton.MouseButton1Click:Connect(function()
 		local instanceId = UIController.GetRevealInstanceId()
 		if not instanceId then
@@ -92,20 +122,17 @@ function AuctionClient.Start()
 		local ok, res = pcall(function()
 			return fn:InvokeServer(instanceId)
 		end)
+		UIController.HideReveal()
 		if ok and typeof(res) == "table" and res.ok then
-			UIController.ShowMessage("Sold for $" .. tostring(res.result) .. "!")
-			UIController.HideReveal()
+			UIController.ShowToast("Sold for $" .. formatMoney(res.result) .. "!")
 		else
-			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Sell failed."
-			UIController.ShowMessage(msg)
+			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Sell failed"
+			UIController.ShowToast(msg)
 		end
 	end)
 	refs.KeepButton.MouseButton1Click:Connect(function()
-		UIController.ShowMessage("Kept! (stays in your inventory panel)")
 		UIController.HideReveal()
-	end)
-	refs.CloseReveal.MouseButton1Click:Connect(function()
-		UIController.HideReveal()
+		UIController.ShowToast("Kept! Find it in your Bag")
 	end)
 end
 
