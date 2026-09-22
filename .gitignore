@@ -2,6 +2,7 @@
 build/
 *.rbxl
 *.rbxlx
+*.rbxl.lock
 *.rbxm
 sourcemap.json
 

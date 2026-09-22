@@ -8,12 +8,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared.GameConfig)
 
-local EconomyService = require(script.Parent.EconomyService)
-local InventoryService = require(script.Parent.InventoryService)
-local NPCBidderService = require(script.Parent.NPCBidderService)
-local AuctionService = require(script.Parent.AuctionService)
-local MapBuilder = require(script.Parent.MapBuilder)
-local PlayerDataService = require(script.Parent.PlayerDataService)
+local EconomyService = require(script.EconomyService)
+local InventoryService = require(script.InventoryService)
+local NPCBidderService = require(script.NPCBidderService)
+local AuctionService = require(script.AuctionService)
+local MapBuilder = require(script.MapBuilder)
+local PlayerDataService = require(script.PlayerDataService)
 
 -- 1) Remotes (created at runtime so Studio needs zero manual setup).
 local function ensureRemotes()
