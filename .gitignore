@@ -1,0 +1,35 @@
+# Build outputs / Rojo
+build/
+*.rbxl
+*.rbxlx
+*.rbxm
+sourcemap.json
+
+# Rojo plugin artifacts
+rojo-plugin/
+
+# Logs
+*.log
+D:/Roblox/Logs/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+~$*
+
+# VSCode
+.vscode/*
+
+# Secrets — never commit these
+*.pem
+*.key
+.env
+*token*
+*secret*
+
+# Aftman / Rokit toolchain (binaries live in D:/Roblox/Dev, not here)
+# Intentionally NOT ignored if we pin versions per-project:
+# (keep aftman.toml / rokit.toml committed, ignore downloaded binaries)
+.toolchain/
