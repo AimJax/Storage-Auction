@@ -84,14 +84,18 @@ Rules that keep this safe:
 - **Recovery:** the place backup
   `StorageAuction-place-before-bidirectional-sync.rbxl` restores the
   pre-sync world. Map files restore via `git checkout -- map/`.
-  If Argon reports a duplicate-name error for `StorageAuctionMap` (or says
-  "Synced" but writes nothing): search Explorer for `StorageAuctionMap` —
-  if TWO exist, expand both, keep the FULL one (StorageUnit + AuctionArea +
-  SpawnLocation), delete the empty/stale copy, Save, restart `argon serve`,
-  reconnect once with Client priority. Never paste Studio contents inline
-  into `map.project.json`: the map must stay a `$path` reference to `map/`,
-  or nothing serializes to disk (and inline Baseplate/Camera entries hand
-  Argon ownership it must not have).
+  NEVER delete `map/StorageAuctionMap/init.meta.json`: it declares the root
+  class (`Model`). Without it Argon resolves the empty folder as `Folder`,
+  Studio's `Model` never matches it, and the whole subtree goes untracked —
+  symptom: "Synced" with zero files, and additions serialize inline into
+  `map.project.json` instead of `map/`. If that happens: restore
+  `map.project.json` from Git, re-add the seed file, restart serve.
+  If Argon reports a duplicate-name error for `StorageAuctionMap`: search
+  Explorer for `StorageAuctionMap` — if TWO exist, expand both, keep the
+  FULL one (StorageUnit + AuctionArea + SpawnLocation), delete the
+  empty/stale copy, Save, restart `argon serve`, reconnect once with Client
+  priority. Never paste Studio contents inline into `map.project.json`:
+  the map must stay a `$path` reference to `map/`.
 
 First-time migration (once ever):
 
