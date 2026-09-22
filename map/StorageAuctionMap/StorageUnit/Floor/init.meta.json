@@ -1,0 +1,10 @@
+{
+  "className": "Part",
+  "properties": {
+    "Anchored": true,
+    "CFrame": [0, -0.3, 40, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "Color": [120, 120, 120],
+    "Material": "Concrete",
+    "Size": [24, 1, 18]
+  }
+}

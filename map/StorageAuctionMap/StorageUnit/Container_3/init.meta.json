@@ -1,0 +1,13 @@
+{
+  "className": "Part",
+  "properties": {
+    "Anchored": true,
+    "Attributes": {
+      "ContainerId": "box_3"
+    },
+    "CFrame": [6, 2.2, 42, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "Color": [140, 110, 160],
+    "Material": "WoodPlanks",
+    "Size": [4, 4, 4]
+  }
+}
