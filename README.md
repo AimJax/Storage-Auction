@@ -24,12 +24,66 @@ Who owns what:
   `StorageAuction-place.rbxl`. Edit it freely: move, resize, recolor,
   restyle. Gameplay adapts (bid center, return point, unit bounds, and box
   positions are all read live from the parts).
-- **Rojo owns** `ReplicatedStorage/Shared`, `ServerScriptService/Server`,
-  `StarterPlayerScripts/Client` (code only). It never touches Workspace.
-- **Git tracks** code, docs, and `tools/` — NOT the `.rbxl` (gitignored).
-  The place file is your local world file; back it up by copying
-  `StorageAuction-place.rbxl` (e.g. `StorageAuction-place-backup-YYYYMMDD.rbxl`)
-  in the same folder before big map edits.
+- **Rojo owns code**: `ReplicatedStorage/Shared`,
+  `ServerScriptService/Server`, `StarterPlayerScripts/Client`
+  (`default.project.json`, port 34872). It never touches Workspace.
+- **Argon owns the map on disk**: `Workspace/StorageAuctionMap` ↔
+  `map/StorageAuctionMap/` (`map.project.json`, port 8000). Bidirectional.
+- **Git tracks** code, docs, `tools/`, AND `map/` — NOT the `.rbxl`
+  (gitignored, including `StorageAuction-place-before-bidirectional-sync.rbxl`,
+  your local backup). The place file is your local world file; back it up by
+  copying `StorageAuction-place.rbxl` before big map edits.
+
+## Everyday Workflow (bidirectional map sync)
+
+Map edits in Studio now land on disk automatically, and file edits flow
+back into Studio. Required plugin settings (Argon plugin → gear icon,
+set once): **Two-Way Sync ON**, **Only Code Mode OFF**,
+**Syncback Properties ON**, **Keep Unknowns ON** (protects Baseplate,
+Camera, and Rojo-synced code from deletion).
+
+First sync ever (pulls the Studio map to disk, once):
+
+1. Terminal 1: `D:\Roblox\Dev\rojo\rojo.exe serve` (code, :34872).
+2. Terminal 2: `D:\Roblox\Dev\argon\argon.exe serve map.project.json`
+   (map, :8000). Leave both running.
+3. Open `StorageAuction-place.rbxl` in Studio (do NOT press Play).
+4. Argon plugin settings → **Initial Sync Priority = Client** (Studio wins).
+5. Connect the Argon plugin → accept the incoming-changes prompt. The map
+   (~60 instances) writes to `map/StorageAuctionMap/` on disk.
+6. Set **Initial Sync Priority back to Server** (normal direction guard).
+7. Connect the Rojo plugin as usual. Save the place (Ctrl+S).
+
+Everyday loop:
+
+1. Start both servers (commands above).
+2. Open `StorageAuction-place.rbxl`.
+3. Connect Argon + Rojo plugins.
+4. Edit the map in Studio → files under `map/` update automatically.
+5. OpenCode reads the latest map + code from disk.
+6. OpenCode edits `map/` or `src/` → Studio reflects it live.
+7. No manual export/import, ever.
+8. Save the place (Ctrl+S) to keep the `.rbxl` in step.
+9. `git add map/ src/`, commit, push.
+
+Rules that keep this safe:
+
+- **Edit-mode only.** Disconnect Argon (or stop its server) before pressing
+  Play. Runtime changes (door Transparency, prompt Enabled, box dimming)
+  must never sync back to disk. (`Transparency`/`CanCollide`/`Enabled` are
+  additionally excluded in `map.project.json` syncback, but the Edit-mode
+  rule is the real guard.)
+- **One owner per subtree.** Never add Workspace to `default.project.json`;
+  never add code services to `map.project.json`. Rojo and Argon must not
+  overlap or they will fight.
+- **If sync disconnects:** 1) stop Play if running, 2) check both terminals
+  for errors, 3) restart the dead server, 4) reconnect that plugin and
+  accept/decline the change prompt carefully (decline Studio→disk prompts
+  that came from a Play session), 5) `git status` to confirm nothing
+  unexpected changed on disk.
+- **Recovery:** the place backup
+  `StorageAuction-place-before-bidirectional-sync.rbxl` restores the
+  pre-sync world. Map files restore via `git checkout -- map/`.
 
 First-time migration (once ever):
 
@@ -41,16 +95,19 @@ First-time migration (once ever):
    at Y = 0, move `StorageAuctionMap` vertically to fit, then continue.
 5. Save the place (Ctrl+S). Done — the map is persistent.
 
-Everyday workflow:
+Everyday workflow (code + map):
 
-1. Start `rojo serve` in `D:\Roblox\Projects\StorageAuction`.
-2. Open `StorageAuction-place.rbxl`, connect Rojo, verify code syncs.
-3. Select anything under `Workspace/StorageAuctionMap` and edit it.
-4. Press Play to test — scripts reference the live parts.
+1. Start `rojo serve` AND `argon serve map.project.json` (two terminals).
+2. Open `StorageAuction-place.rbxl`, connect both plugins.
+3. Select anything under `Workspace/StorageAuctionMap` and edit it —
+   files under `map/` update automatically.
+4. Disconnect Argon, then press Play to test.
 5. Save the place in Studio to keep map edits (Ctrl+S).
-6. Code edits happen in `src/` files; commit/push those via Git.
-7. Never put the map under Rojo management — `default.project.json` must
-   keep no Workspace entry, or manual edits will be overwritten.
+6. Code edits happen in `src/` files; map edits land in `map/`;
+   commit/push both via Git.
+7. Ownership split is load-bearing: Rojo = code only, Argon = map only.
+   Never add Workspace to `default.project.json` or code services to
+   `map.project.json`.
 
 Required vs optional map pieces (missing required = clear red error in
 Output at Play, never a silent rebuild): required are `StorageUnit` with
@@ -65,6 +122,9 @@ Output at Play, never a silent rebuild): required are `StorageUnit` with
 3. Rojo Studio plugin: either `D:\Roblox\Dev\rojo\rojo.exe plugin install`
    (installs into Studio plugins) or via
    https://create.roblox.com/marketplace/asset/13916111004/Rojo
+4. Argon CLI at `D:\Roblox\Dev\argon\argon.exe` (2.0.29) for bidirectional
+   map sync. Plugin installed via `argon.exe plugin install` (already done
+   once; re-run after major CLI updates).
 
 ## Roblox Studio setup (exact steps)
 1. Open Roblox Studio → New → **Baseplate** (any baseplate place).

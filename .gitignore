@@ -6,6 +6,13 @@ build/
 *.rbxm
 sourcemap.json
 
+# Places: local-only world files (code AND map source-of-truth live here).
+# The versionable map representation is map/ (tracked). Never commit .rbxl.
+# (StorageAuction-place-before-bidirectional-sync.rbxl is the pre-sync backup.)
+
+# Argon map sync: map/ is INTENTIONALLY TRACKED — do not ignore it.
+# Argon writes only under map/ per map.project.json; nothing else to exclude.
+
 # Rojo plugin artifacts
 rojo-plugin/
 

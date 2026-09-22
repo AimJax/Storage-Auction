@@ -29,6 +29,19 @@ folder with 4 RemoteEvents + 4 RemoteFunctions; `leaderstats/Cash`. The map
 place file, is hand-editable, and Rojo never touches Workspace (see
 `default.project.json` — no Workspace mapping).
 
+## Sync ownership (TWO tools, non-overlapping — keep it that way)
+- Rojo (`D:\Roblox\Dev\rojo\rojo.exe serve`, :34872) owns CODE ONLY:
+  Shared / Server / Client via `default.project.json`.
+- Argon (`D:\Roblox\Dev\argon\argon.exe serve map.project.json`, :8000)
+  owns MAP ONLY: `Workspace/StorageAuctionMap` ↔ `map/` via
+  `map.project.json` (bidirectional). Never add code services to it.
+- Never add Workspace to `default.project.json`. Never overlap the trees.
+- Argon plugin settings (set once in Studio): Two-Way Sync ON, Only Code
+  Mode OFF, Syncback Properties ON, Keep Unknowns ON. First sync uses
+  Initial Sync Priority = Client, then back to Server.
+- Argon in Edit mode only — disconnect before Play so runtime state
+  (door/prompt/box changes) never syncs back to `map/`.
+
 ### Server modules (`src/server/`)
 - `init.server.luau` — bootstrap: remotes, services, map, auction loop, players.
 - `AuctionService.luau` — state machine (Waiting/Inspection/Bidding/Sold/

@@ -1,0 +1,21 @@
+{
+  "name": "StorageAuctionMap",
+  "port": 8000,
+  "tree": {
+    "$className": "DataModel",
+    "$keepUnknowns": true,
+    "Workspace": {
+      "$className": "Workspace",
+      "$keepUnknowns": true,
+      "StorageAuctionMap": {
+        "$path": "map/StorageAuctionMap"
+      }
+    }
+  },
+  "syncback": {
+    "ignoreGlobs": [],
+    "ignoreNames": [],
+    "ignoreClasses": [],
+    "ignoreProperties": ["Transparency", "CanCollide", "Enabled"]
+  }
+}
