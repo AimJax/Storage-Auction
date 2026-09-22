@@ -248,6 +248,11 @@ function MapBuilder.Build(numContainers)
 
 	unit.Parent = workspace
 
+	-- Auction viewing area + seating (separate model, in front of the unit).
+	-- BidCenter doubles as the server-authoritative bid-radius center.
+	local bidCenter = Vector3.new(cx, floorTop, frontZ - 10)
+	MapBuilder.BuildForecourt(workspace, groundTop, bidCenter)
+
 	return {
 		Unit = unit,
 		Door = door,
@@ -257,8 +262,85 @@ function MapBuilder.Build(numContainers)
 		FloorTop = floorTop,
 		RoofTop = roofTop,
 		FrontZ = frontZ,
+		BidCenter = bidCenter,
 		ReturnCFrame = CFrame.lookAt(outsidePos, outsideFace),
 	}
+end
+
+-- Subtle forecourt in front of the unit: a low dark mat marking the standing
+-- area plus 4 simple Seat chairs (two pairs) facing the unit. Everything is
+-- placeholder geometry; the mat top sits above the ground (no coplanar faces)
+-- and chairs stand clear of spawn, entrance, and each other.
+function MapBuilder.BuildForecourt(workspace, groundTop, bidCenter)
+	local old = workspace:FindFirstChild("SA_Furniture")
+	if old then
+		old:Destroy()
+	end
+	local furniture = Instance.new("Model")
+	furniture.Name = "SA_Furniture"
+
+	-- Standing-area mat: thin, dark, clearly below foot height.
+	makePart({
+		Name = "AuctionMat",
+		Size = Vector3.new(20, 0.1, 12),
+		Position = Vector3.new(bidCenter.X, groundTop + 0.05, bidCenter.Z),
+		Color = Color3.fromRGB(55, 55, 65),
+		Material = Enum.Material.SmoothPlastic,
+	}, furniture)
+
+	-- Two chair pairs, off-center so the middle walkway stays clear.
+	-- Chairs face +Z (toward the unit) and sit inside the bid radius.
+	local chairXs = { -7, -4, 4, 7 }
+	for i, xOff in ipairs(chairXs) do
+		MapBuilder.BuildChair(furniture, Vector3.new(bidCenter.X + xOff, groundTop, bidCenter.Z - 8), "Chair_" .. i)
+	end
+
+	furniture.Parent = workspace
+end
+
+function MapBuilder.BuildChair(parent, groundPos, name)
+	local x, gy, z = groundPos.X, groundPos.Y, groundPos.Z
+	-- Center post.
+	makePart({
+		Name = name .. "_Post",
+		Size = Vector3.new(1, 1.5, 1),
+		Position = Vector3.new(x, gy + 0.75, z),
+		Color = Color3.fromRGB(60, 60, 68),
+		Material = Enum.Material.Metal,
+	}, parent)
+	-- Seat (real Seat instance so players can sit).
+	local seat = Instance.new("Seat")
+	seat.Name = name
+	seat.Anchored = true
+	seat.Size = Vector3.new(2.5, 0.6, 2.5)
+	seat.Position = Vector3.new(x, gy + 1.8, z)
+	seat.Color = Color3.fromRGB(70, 80, 100)
+	seat.Material = Enum.Material.SmoothPlastic
+	seat.Parent = parent
+	-- Backrest on the -Z side (chair faces +Z, toward the unit).
+	makePart({
+		Name = name .. "_Back",
+		Size = Vector3.new(2.5, 2.2, 0.5),
+		Position = Vector3.new(x, gy + 3.1, z - 1.25),
+		Color = Color3.fromRGB(70, 80, 100),
+		Material = Enum.Material.SmoothPlastic,
+	}, parent)
+end
+
+-- XZ distance check against the bid area. Used for server-authoritative bid
+-- validation; Y is ignored so jumping/seating never matters.
+function MapBuilder.IsWithinBidRadius(handles, player, radius)
+	if not handles or not handles.BidCenter or not player then
+		return false
+	end
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	local dx = root.Position.X - handles.BidCenter.X
+	local dz = root.Position.Z - handles.BidCenter.Z
+	return (dx * dx + dz * dz) <= radius * radius
 end
 
 -- M1 door behavior: appear/disappear only.

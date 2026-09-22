@@ -37,20 +37,27 @@ open boxes → reveal randomized items → sell/keep → next auction.
 1. In Studio: **Play** (F5). You spawn at (0,3,0), unit is at (0,0,40).
 2. Top bar shows state + countdown + bid + Cash (starts at $1000).
 3. WAIT (8s) → INSPECTION (15s, door disappears, boxes visible, barrier blocks entry).
-4. BIDDING (30s): press **BID $X**. NPCs (Dealer Dan, Collector Kate) will
-   counter-bid. Outbid them.
+4. BIDDING (30s): stand near the unit (dark mat / chairs area, 35 studs)
+   and press **BID $X**. Walk far away and the BID button hides — the server
+   rejects distant bids with "Move closer to the auction to bid". NPCs
+   (Dealer Dan, Collector Kate) will counter-bid. Outbid them.
+   Chairs: 4 seats in two pairs face the unit; sitting still counts as near.
 5. SOLD: if you won, Cash is deducted — you stay exactly where you are.
    No teleport. The entrance opens (door gone; barrier drops at Rummaging).
    If an NPC won, you never gain access; wait for reset (~5s Cleanup →
    Waiting → next loop).
 6. As winner during RUMMAGING: physically WALK into the unit whenever you
-   like, hold **E** on a box. Opened boxes dim and their prompts turn off.
-   You may walk back out freely at any time. Anyone may walk in, but only
-   the winner can open boxes (others get a rejection toast).
+   like, hold **E** on a box. Opening reveals the item but does NOT Bag it —
+   a pending decision appears. You may walk back out freely at any time.
+   Anyone may walk in, but only the winner can open boxes (others get a
+   rejection toast). Opening a second box before deciding shows
+   "Choose Sell or Keep first".
    Reveal panel (compact, centered) shows Name / Rarity / Condition / Value.
-7. Press **SELL** → Cash increases, panel auto-closes. **KEEP** → panel
-   auto-closes, item stays in your **Bag** (bottom-right button, hidden
-   by default — click to open).
+7. Press **SELL** → server adds FinalValue to Cash (never Bagged), panel
+   auto-closes. Press **KEEP** → server moves the item into your **Bag**
+   (bottom-right button, hidden by default — click to open), panel
+   auto-closes. The final box keeps Rummaging alive until you decide; if the
+   timer expires mid-decision you get a 10s grace (prompts off) to choose.
 8. Open all 3 boxes (or wait 90s) → Cleanup: entrance stays open as a grace
    period so you can walk out naturally. If you are still inside when the
    next auction resets, you are moved to a safe spot outside (safety

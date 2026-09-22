@@ -85,8 +85,15 @@ function AuctionClient.Start()
 			UIController.ShowReveal(item)
 		end
 	end)
-	getRemote(GameConfig.RemoteNames.Notify, "RemoteEvent").OnClientEvent:Connect(function(text)
-		UIController.ShowToast(tostring(text))
+	getRemote(GameConfig.RemoteNames.Notify, "RemoteEvent").OnClientEvent:Connect(function(payload)
+		if typeof(payload) == "table" then
+			if payload.closeReveal then
+				UIController.HideReveal()
+			end
+			UIController.ShowToast(tostring(payload.text))
+		else
+			UIController.ShowToast(tostring(payload))
+		end
 	end)
 
 	-- Bid
@@ -134,9 +141,49 @@ function AuctionClient.Start()
 		end
 	end)
 	refs.KeepButton.MouseButton1Click:Connect(function()
-		UIController.HideReveal()
-		UIController.ShowToast("Kept! Find it in your Bag")
+		local instanceId = UIController.GetRevealInstanceId()
+		if not instanceId then
+			return
+		end
+		local fn = getRemote(GameConfig.RemoteNames.KeepItem, "RemoteFunction")
+		local ok, res = pcall(function()
+			return fn:InvokeServer(instanceId)
+		end)
+		if ok and typeof(res) == "table" and res.ok then
+			UIController.HideReveal()
+			UIController.ShowToast("Kept! Find it in your Bag")
+		else
+			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Keep failed"
+			UIController.ShowToast(msg)
+		end
 	end)
+
+	-- Local proximity check for the BID button (UX only; server validates).
+	-- Runs on a slow tick so movement updates without spamming anything.
+	task.spawn(function()
+		while true do
+			task.wait(0.5)
+			UIController.UpdateStatus(snapshot, cash, player.Name, AuctionClient.IsWithinBidRadius())
+		end
+	end)
+end
+
+-- Mirrors the server's XZ bid-radius check using the broadcast center.
+-- Missing data/character counts as outside (button hidden, never a bid).
+function AuctionClient.IsWithinBidRadius()
+	local center = snapshot.bidCenter
+	local radius = snapshot.bidRadius or GameConfig.BidRadius
+	if typeof(center) ~= "table" then
+		return false
+	end
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	local dx = root.Position.X - (tonumber(center.x) or 0)
+	local dz = root.Position.Z - (tonumber(center.z) or 0)
+	return (dx * dx + dz * dz) <= radius * radius
 end
 
 return AuctionClient

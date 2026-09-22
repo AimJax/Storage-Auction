@@ -34,6 +34,16 @@ local HiddenValue = 0
 local ContainerItems = {} -- [containerId] = itemInstance (pre-generated, hidden)
 local ContainerOpened = {} -- [containerId] = true once opened
 
+-- Pending Sell/Keep decisions. [UserId] = itemInstance the player revealed
+-- but has not resolved yet. Server-owned: opening never grants ownership;
+-- only TryKeepItem moves the item into the inventory, only TrySellItem
+-- converts it to Cash. One pending decision per player max.
+local PendingByUser = {}
+
+-- Decision grace deadline (os.clock timestamp) when the rummage timer
+-- expires mid-decision; nil when no grace is active.
+local RummageGraceEndsAt = nil
+
 local function now()
 	return os.clock()
 end
@@ -48,6 +58,7 @@ local function broadcast()
 	end
 	local ev = Remotes:FindFirstChild(GameConfig.RemoteNames.AuctionState)
 	if ev then
+		local center = MapHandles and MapHandles.BidCenter
 		ev:FireAllClients({
 			state = State,
 			timeLeft = math.floor(timeLeft() + 0.5),
@@ -56,6 +67,8 @@ local function broadcast()
 			minIncrement = GameConfig.MinBidIncrement,
 			winner = WinnerName,
 			isWinner = false, -- client compares winner to its own name
+			bidRadius = GameConfig.BidRadius,
+			bidCenter = if center then { x = center.X, y = center.Y, z = center.Z } else nil,
 		})
 	end
 end
@@ -99,6 +112,8 @@ local function resetForNextAuction()
 	NpcBidders = {}
 	ContainerItems = {}
 	ContainerOpened = {}
+	PendingByUser = {}
+	RummageGraceEndsAt = nil
 	HiddenValue = 0
 	if MapHandles then
 		MapBuilder.SetDoorOpen(MapHandles, false)
@@ -129,6 +144,11 @@ function AuctionService.TryBid(playerOrNil, amount, isNPC, npcName)
 	if not player then
 		return false, "Invalid bidder."
 	end
+	-- Local auction: must stand near the unit. Server-authoritative; the
+	-- client button is only a UX hint.
+	if not MapBuilder.IsWithinBidRadius(MapHandles, player, GameConfig.BidRadius) then
+		return false, "Move closer to the auction to bid."
+	end
 	-- affordability check (deduct only on win for M1 simplicity)
 	if EconomyService.GetCash(player) < amount then
 		return false, "Not enough Cash (need $" .. amount .. ")."
@@ -140,13 +160,18 @@ function AuctionService.TryBid(playerOrNil, amount, isNPC, npcName)
 	return true, "Bid accepted."
 end
 
--- Winner-only container opening. Returns (ok, itemOrMessage).
+-- Winner-only container opening. Produces a PENDING decision: the item is
+-- revealed but NOT added to the inventory. The player must resolve it via
+-- TryKeepItem / TrySellItem. Returns (ok, itemOrMessage).
 function AuctionService.TryOpenContainer(player, containerId)
 	if State ~= "Rummaging" then
 		return false, "Containers can only be opened during rummaging."
 	end
 	if WinnerUserId ~= player.UserId then
-		return false, "Only the auction winner can open containers."
+		return false, "Only the auction winner can open this box."
+	end
+	if PendingByUser[player.UserId] ~= nil then
+		return false, "Choose Sell or Keep first."
 	end
 	if ContainerOpened[containerId] then
 		return false, "That box is already opened."
@@ -156,7 +181,7 @@ function AuctionService.TryOpenContainer(player, containerId)
 		return false, "Unknown container."
 	end
 	ContainerOpened[containerId] = true
-	InventoryService.AddItem(player, item)
+	PendingByUser[player.UserId] = item
 	MapBuilder.MarkContainerOpened(MapHandles, containerId)
 
 	-- Push reveal UI to the opener.
@@ -167,8 +192,31 @@ function AuctionService.TryOpenContainer(player, containerId)
 	return true, item
 end
 
--- Sell an owned item instance. Server looks up FinalValue — never trusts client.
+-- Resolve the pending decision as KEEP. Only the matching pending
+-- InstanceId is accepted; no client-supplied item data is trusted.
+function AuctionService.TryKeepItem(player, instanceId)
+	local pending = PendingByUser[player.UserId]
+	if not pending then
+		return false, "No pending item to keep."
+	end
+	if instanceId ~= nil and instanceId ~= pending.InstanceId then
+		return false, "That item is no longer pending."
+	end
+	PendingByUser[player.UserId] = nil
+	InventoryService.AddItem(player, pending)
+	return true, pending
+end
+
+-- Resolve the pending decision as SELL: FinalValue straight to Cash, never
+-- into the inventory. Falls back to selling an owned Bag item so the remote
+-- keeps its original contract. Server looks up all values itself.
 function AuctionService.TrySellItem(player, instanceId)
+	local pending = PendingByUser[player.UserId]
+	if pending and (instanceId == nil or instanceId == pending.InstanceId) then
+		PendingByUser[player.UserId] = nil
+		EconomyService.AddCash(player, pending.FinalValue)
+		return true, pending.FinalValue
+	end
 	local removed = InventoryService.RemoveItem(player, instanceId)
 	if not removed then
 		return false, "Item not found in your inventory."
@@ -177,7 +225,44 @@ function AuctionService.TrySellItem(player, instanceId)
 	return true, removed.FinalValue
 end
 
+-- True while the current winner still owes a Sell/Keep decision (and is
+-- still in the game). Gates the early Rummaging -> Cleanup transition.
+local function winnerHasPending()
+	if WinnerUserId == nil then
+		return false
+	end
+	if PendingByUser[WinnerUserId] == nil then
+		return false
+	end
+	return Players:GetPlayerByUserId(WinnerUserId) ~= nil
+end
+
+-- Grace expiry fallback: never delete value. Auto-keep the pending item so
+-- an idle/disconnected-decision player keeps what they opened.
+local function forceKeepPending(userId)
+	local pending = PendingByUser[userId]
+	if not pending then
+		return
+	end
+	PendingByUser[userId] = nil
+	local player = Players:GetPlayerByUserId(userId)
+	if player then
+		InventoryService.AddItem(player, pending)
+		local notify = Remotes and Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
+		if notify then
+			notify:FireClient(player, { text = "Time expired - kept " .. pending.Name, closeReveal = true })
+		end
+	end
+end
+
+function AuctionService.ClearPlayer(player)
+	if player then
+		PendingByUser[player.UserId] = nil
+	end
+end
+
 function AuctionService.GetSnapshot()
+	local center = MapHandles and MapHandles.BidCenter
 	return {
 		state = State,
 		timeLeft = math.floor(timeLeft() + 0.5),
@@ -185,6 +270,8 @@ function AuctionService.GetSnapshot()
 		bidder = CurrentBidder,
 		minIncrement = GameConfig.MinBidIncrement,
 		winner = WinnerName,
+		bidRadius = GameConfig.BidRadius,
+		bidCenter = if center then { x = center.X, y = center.Y, z = center.Z } else nil,
 	}
 end
 
@@ -279,7 +366,8 @@ local function stateLoop()
 			end
 			task.wait(0.5)
 		elseif State == "Rummaging" then
-			-- End early if all boxes opened.
+			-- End early only when every box is opened AND the winner has
+			-- resolved their pending decision (final-box reveal must survive).
 			local allOpened = true
 			for id, _ in pairs(ContainerItems) do
 				if not ContainerOpened[id] then
@@ -287,12 +375,35 @@ local function stateLoop()
 					break
 				end
 			end
-			if allOpened or timeLeft() <= 0 then
+			if allOpened and not winnerHasPending() then
+				RummageGraceEndsAt = nil
 				-- Cleanup is a grace period: prompts off, but the entrance
 				-- stays open so everyone can walk out naturally.
 				MapBuilder.SetPromptsEnabled(MapHandles, false)
 				MapBuilder.SetBarrier(MapHandles, false)
 				setState("Cleanup", GameConfig.CleanupDuration)
+			elseif timeLeft() <= 0 then
+				if winnerHasPending() then
+					-- Decision grace: prompts off, reveal stays, player
+					-- still gets to choose. Never auto-keep here.
+					if RummageGraceEndsAt == nil then
+						RummageGraceEndsAt = now() + GameConfig.DecisionGracePeriod
+						MapBuilder.SetPromptsEnabled(MapHandles, false)
+					elseif now() >= RummageGraceEndsAt then
+						-- Grace ran out: keep (never delete), then Cleanup.
+						if WinnerUserId ~= nil then
+							forceKeepPending(WinnerUserId)
+						end
+						RummageGraceEndsAt = nil
+						MapBuilder.SetBarrier(MapHandles, false)
+						setState("Cleanup", GameConfig.CleanupDuration)
+					end
+				else
+					RummageGraceEndsAt = nil
+					MapBuilder.SetPromptsEnabled(MapHandles, false)
+					MapBuilder.SetBarrier(MapHandles, false)
+					setState("Cleanup", GameConfig.CleanupDuration)
+				end
 			end
 			task.wait(0.5)
 		elseif State == "Cleanup" then
@@ -338,6 +449,13 @@ function AuctionService.Init(deps)
 		sellItem.OnServerInvoke = function(player, instanceId)
 			local ok, result = AuctionService.TrySellItem(player, instanceId)
 			return { ok = ok, result = result, cash = EconomyService.GetCash(player) }
+		end
+	end
+	local keepItem = Remotes:FindFirstChild(GameConfig.RemoteNames.KeepItem)
+	if keepItem and keepItem:IsA("RemoteFunction") then
+		keepItem.OnServerInvoke = function(player, instanceId)
+			local ok, result = AuctionService.TryKeepItem(player, instanceId)
+			return { ok = ok, result = result }
 		end
 	end
 

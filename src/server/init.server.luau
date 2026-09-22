@@ -31,6 +31,7 @@ local function ensureRemotes()
 		{ GameConfig.RemoteNames.Notify, "RemoteEvent" },
 		{ GameConfig.RemoteNames.PlaceBid, "RemoteFunction" },
 		{ GameConfig.RemoteNames.OpenContainer, "RemoteFunction" },
+		{ GameConfig.RemoteNames.KeepItem, "RemoteFunction" },
 		{ GameConfig.RemoteNames.SellItem, "RemoteFunction" },
 	}
 	for _, d in ipairs(defs) do
@@ -87,6 +88,7 @@ end
 
 local function onPlayerRemoving(player)
 	PlayerDataService.Save(player)
+	AuctionService.ClearPlayer(player)
 	InventoryService.ClearPlayer(player)
 	EconomyService.ClearPlayer(player)
 end

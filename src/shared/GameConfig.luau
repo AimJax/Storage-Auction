@@ -12,6 +12,15 @@ local GameConfig = {
 	BidStartPrice = 50,
 	MinBidIncrement = 25,
 
+	-- Bidding is local: players must stand within BidRadius (studs, XZ) of
+	-- the auction area center in front of the unit. Server-authoritative.
+	BidRadius = 35,
+
+	-- Rummaging decision grace: if the timer expires while the winner still
+	-- has an unresolved item, they get this many extra seconds (prompts off)
+	-- to choose Sell or Keep before Cleanup begins.
+	DecisionGracePeriod = 10,
+
 	-- State durations (seconds)
 	WaitingDuration = 8,
 	InspectionDuration = 15,
@@ -45,6 +54,7 @@ local GameConfig = {
 		Notify = "Notify",
 		PlaceBid = "PlaceBid",
 		OpenContainer = "OpenContainer",
+		KeepItem = "KeepItem",
 		SellItem = "SellItem",
 	},
 }

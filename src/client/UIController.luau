@@ -299,10 +299,13 @@ end
 -- State-driven status. On every state transition: winner text cleared unless
 -- relevant, bid button hidden unless Bidding, hint contextual, reveal closed
 -- when leaving Rummaging, toast cleared so nothing goes stale.
-function UIController.UpdateStatus(snapshot, cash, localPlayerName)
+-- bidAllowed (from the local proximity check) gates the BID button during
+-- Bidding; nil counts as allowed so the button works before the first check.
+function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 	local state = snapshot.state or "Waiting"
 	local transitioned = state ~= lastState
 	lastState = state
+	local canBid = bidAllowed ~= false
 
 	if transitioned then
 		UIController.HideToast()
@@ -339,17 +342,21 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName)
 	end
 	if refs.BidButton then
 		local isBidding = state == "Bidding"
-		refs.BidButton.Visible = isBidding
+		refs.BidButton.Visible = isBidding and canBid
 		if isBidding then
 			refs.BidButton.Text = "BID $" .. formatMoney((snapshot.currentBid or 0) + (snapshot.minIncrement or 25))
 		end
 	end
 
-	if transitioned or state == "Rummaging" then
+	if transitioned or state == "Rummaging" or state == "Bidding" then
 		if state == "Inspection" then
 			setHint("Inspect the unit before bidding begins")
 		elseif state == "Bidding" then
-			setHint("Outbid your rivals to win the unit")
+			if canBid then
+				setHint("Outbid your rivals to win the unit")
+			else
+				setHint("Move closer to join the auction")
+			end
 		elseif state == "Rummaging" then
 			if snapshot.winner == localPlayerName then
 				setHint("You won! Walk in and press E on each box")
