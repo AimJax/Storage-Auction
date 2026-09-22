@@ -3,21 +3,27 @@
 -- Creates 1 storage unit + N containers + spawn, so no manual Studio
 -- building is required. Returns handles the AuctionService drives.
 --
--- Ground rule: exactly ONE ground surface. If the place already has a
--- Baseplate (or any ground under the unit), we reuse it. Our legacy
--- SA_Baseplate is removed when real ground exists, and only created when
--- the place has no ground at all (e.g. empty Rojo-built place).
+-- Ground rule: exactly ONE exterior ground surface (the world's Baseplate).
+-- The unit has its own interior floor slab whose top sits FLOOR_RISE studs
+-- above the exterior ground — a real vertical separation, so no Z-fighting.
+-- All Y positions derive from the detected ground top; nothing hard-codes
+-- absolute heights except the unit's XZ location.
 --
--- Layout (studs, Y relative to detected ground top):
---   Unit centered at (0, *, 40), opening faces -Z (toward spawn).
---   WinnerReturnPosition sits ~7 studs in front of the door, facing the unit.
+-- Door rule (M1 simple): the door only appears/disappears. No swing, no
+-- animation. Closed = visible + colliding. Open = invisible + non-colliding.
+--
+-- Access philosophy: players walk freely. Nobody is routinely teleported;
+-- MovePlayerOutsideIfInside is a safety fallback used only right before the
+-- unit closes for the next auction.
+--
+-- Layout (studs): unit centered at (0, *, 40), opening faces -Z (spawn side).
 
 local MapBuilder = {}
 
 local UNIT_CX, UNIT_CZ = 0, 40
 local UNIT_W, UNIT_H, UNIT_D = 24, 12, 18
 local WALL_T = 1
-local DOOR_W, DOOR_H, DOOR_T = 22, 10, 0.6
+local FLOOR_RISE = 0.2 -- interior floor top above exterior ground (no coplanar faces)
 local RETURN_OFFSET_FRONT = 7
 
 local containerColors = {
@@ -116,97 +122,98 @@ function MapBuilder.Build(numContainers)
 	unit.Name = "SA_Unit"
 
 	local cx, cz = UNIT_CX, UNIT_CZ
-	local gy = groundTop -- shorthand: ground surface Y
+	local floorTop = groundTop + FLOOR_RISE -- interior walking surface
 	local frontZ = cz - UNIT_D / 2
 	local backZ = cz + UNIT_D / 2
+	local roofTop = floorTop + UNIT_H + WALL_T
 
-	-- Floor slab: top face flush with the ground (no step, no overlap).
+	-- Interior floor slab: top face FLOOR_RISE above exterior ground.
 	makePart({
 		Name = "Floor",
 		Size = Vector3.new(UNIT_W, WALL_T, UNIT_D),
-		Position = Vector3.new(cx, gy - WALL_T / 2, cz),
+		Position = Vector3.new(cx, floorTop - WALL_T / 2, cz),
 		Color = Color3.fromRGB(120, 120, 120),
 		Material = Enum.Material.Concrete,
 	}, unit)
 
-	-- Walls sit ON the floor (bottoms at gy), outer faces flush with slab edges.
+	-- Walls stand ON the interior floor (no gaps underneath), outer faces
+	-- flush with the slab edges.
 	makePart({
 		Name = "BackWall",
 		Size = Vector3.new(UNIT_W, UNIT_H, WALL_T),
-		Position = Vector3.new(cx, gy + UNIT_H / 2, backZ - WALL_T / 2),
+		Position = Vector3.new(cx, floorTop + UNIT_H / 2, backZ - WALL_T / 2),
 		Color = Color3.fromRGB(150, 75, 60),
 		Material = Enum.Material.CorrodedMetal,
 	}, unit)
 	makePart({
 		Name = "LeftWall",
 		Size = Vector3.new(WALL_T, UNIT_H, UNIT_D),
-		Position = Vector3.new(cx - UNIT_W / 2 + WALL_T / 2, gy + UNIT_H / 2, cz),
+		Position = Vector3.new(cx - UNIT_W / 2 + WALL_T / 2, floorTop + UNIT_H / 2, cz),
 		Color = Color3.fromRGB(150, 75, 60),
 		Material = Enum.Material.CorrodedMetal,
 	}, unit)
 	makePart({
 		Name = "RightWall",
 		Size = Vector3.new(WALL_T, UNIT_H, UNIT_D),
-		Position = Vector3.new(cx + UNIT_W / 2 - WALL_T / 2, gy + UNIT_H / 2, cz),
+		Position = Vector3.new(cx + UNIT_W / 2 - WALL_T / 2, floorTop + UNIT_H / 2, cz),
 		Color = Color3.fromRGB(150, 75, 60),
 		Material = Enum.Material.CorrodedMetal,
 	}, unit)
-	-- Roof rests on the walls (bottom at gy + H), flush footprint.
+	-- Roof rests on the walls, flush footprint.
 	makePart({
 		Name = "Roof",
 		Size = Vector3.new(UNIT_W, WALL_T, UNIT_D),
-		Position = Vector3.new(cx, gy + UNIT_H + WALL_T / 2, cz),
+		Position = Vector3.new(cx, floorTop + UNIT_H + WALL_T / 2, cz),
 		Color = Color3.fromRGB(80, 80, 85),
 		Material = Enum.Material.Metal,
 	}, unit)
 
-	-- Lintel / sign board above the front opening (opening height = H - 2).
-	local lintel = makePart({
-		Name = "SignBoard",
-		Size = Vector3.new(UNIT_W, 2, WALL_T),
-		Position = Vector3.new(cx, gy + UNIT_H - 1, frontZ),
-		Color = Color3.fromRGB(40, 40, 45),
-	}, unit)
-	do
-		local gui = Instance.new("BillboardGui")
-		gui.Size = UDim2.fromOffset(400, 60)
-		gui.AlwaysOnTop = false
-		gui.MaxDistance = 120
-		local label = Instance.new("TextLabel")
-		label.Size = UDim2.fromScale(1, 1)
-		label.BackgroundTransparency = 1
-		label.Text = "STORAGE AUCTION — UNIT 1"
-		label.TextScaled = true
-		label.TextColor3 = Color3.new(1, 1, 1)
-		label.Font = Enum.Font.GothamBold
-		label.Parent = gui
-		gui.Parent = lintel
-	end
-
-	-- Swing door on a left-edge hinge. Closed: fills the opening below the
-	-- lintel. Open: rotated ~100 degrees outward toward approaching players.
-	local doorClosedPos = Vector3.new(cx, gy + DOOR_H / 2, frontZ)
+	-- Front door: fills the opening. Only shown/hidden, never animated.
+	-- (A proper rolling shutter can replace this later.)
 	local door = makePart({
 		Name = "Door",
-		Size = Vector3.new(DOOR_W, DOOR_H, DOOR_T),
-		Position = doorClosedPos,
+		Size = Vector3.new(UNIT_W - 2 * WALL_T, UNIT_H, 0.6),
+		Position = Vector3.new(cx, floorTop + UNIT_H / 2, frontZ),
 		Color = Color3.fromRGB(180, 180, 190),
 		Material = Enum.Material.Metal,
 	}, unit)
 	door:SetAttribute("IsDoor", true)
-	local hingePos = Vector3.new(cx - DOOR_W / 2, gy + DOOR_H / 2, frontZ)
-	local doorOffset = Vector3.new(DOOR_W / 2, 0, 0) -- hinge -> door center
-	door:SetAttribute("DoorOpen", false)
 
-	-- Invisible barrier in the opening: blocks entry while the door is open.
+	-- Invisible barrier used ONLY while players must look but not enter
+	-- (Inspection/Bidding). Never active during Rummaging.
 	local barrier = makePart({
 		Name = "Barrier",
-		Size = Vector3.new(DOOR_W, DOOR_H, 0.5),
-		Position = doorClosedPos,
+		Size = Vector3.new(UNIT_W - 2 * WALL_T, UNIT_H, 0.5),
+		Position = Vector3.new(cx, floorTop + UNIT_H / 2, frontZ),
 		Transparency = 1,
 		CanCollide = true,
 		CanQuery = false,
 	}, unit)
+
+	-- Physical sign board sitting on the roof, front edge. World-space
+	-- SurfaceGui on the -Z face: obeys the world, never renders through
+	-- geometry, never fights the screen-space HUD.
+	local sign = makePart({
+		Name = "Sign",
+		Size = Vector3.new(18, 2.5, 0.6),
+		Position = Vector3.new(cx, roofTop + 1.3, frontZ),
+		Color = Color3.fromRGB(40, 40, 45),
+	}, unit)
+	do
+		local surface = Instance.new("SurfaceGui")
+		surface.Face = Enum.NormalId.Back -- -Z: faces approaching players
+		surface.CanvasSize = Vector2.new(600, 84)
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+		label.BorderSizePixel = 0
+		label.Text = "STORAGE — UNIT 1"
+		label.TextScaled = true
+		label.TextColor3 = Color3.new(1, 1, 1)
+		label.Font = Enum.Font.GothamBold
+		label.Parent = surface
+		surface.Parent = sign
+	end
 
 	-- Containers: centered row toward the back, clearly visible from the front.
 	local containers = {}
@@ -215,7 +222,7 @@ function MapBuilder.Build(numContainers)
 		local box = makePart({
 			Name = "Container_" .. i,
 			Size = Vector3.new(4, 4, 4),
-			Position = Vector3.new(cx + xOff, gy + 2, cz + 2),
+			Position = Vector3.new(cx + xOff, floorTop + 2, cz + 2),
 			Color = containerColors[((i - 1) % #containerColors) + 1],
 			Material = Enum.Material.WoodPlanks,
 		}, unit)
@@ -234,74 +241,39 @@ function MapBuilder.Build(numContainers)
 		containers["box_" .. i] = box
 	end
 
-	-- Winner spots. Inside: clear of boxes/walls, facing the boxes.
-	-- Outside: several studs in front of the door, facing the unit.
-	local insidePos = Vector3.new(cx, gy + 4, frontZ + 4)
-	local insideFace = Vector3.new(cx, gy + 4, cz + 2)
-	local outsidePos = Vector3.new(cx, gy + 4, frontZ - RETURN_OFFSET_FRONT)
-	local outsideFace = Vector3.new(cx, gy + 3, frontZ)
+	-- Safe return spot: several studs in front of the door, facing the unit.
+	-- Used ONLY as a safety fallback, never during normal play.
+	local outsidePos = Vector3.new(cx, floorTop + 4, frontZ - RETURN_OFFSET_FRONT)
+	local outsideFace = Vector3.new(cx, floorTop + 2, frontZ)
 
 	unit.Parent = workspace
 
 	return {
 		Unit = unit,
 		Door = door,
-		DoorHinge = hingePos,
-		DoorOffset = doorOffset,
-		DoorAnimToken = 0,
 		Barrier = barrier,
 		Containers = containers,
-		UnitCenter = Vector3.new(cx, gy, cz),
-		WinnerInsideCFrame = CFrame.lookAt(insidePos, insideFace),
-		WinnerReturnCFrame = CFrame.lookAt(outsidePos, outsideFace),
+		UnitCenter = Vector3.new(cx, floorTop, cz),
+		FloorTop = floorTop,
+		RoofTop = roofTop,
+		FrontZ = frontZ,
+		ReturnCFrame = CFrame.lookAt(outsidePos, outsideFace),
 	}
 end
 
--- Swing-door animation. Runs a short lerp; newer calls cancel older ones.
-local function animateDoor(handles, open)
+-- M1 door behavior: appear/disappear only.
+function MapBuilder.SetDoorOpen(handles, open)
 	local door = handles and handles.Door
 	if not door or door.Parent == nil then
 		return
 	end
-	handles.DoorAnimToken += 1
-	local token = handles.DoorAnimToken
-	local hingeCF = CFrame.new(handles.DoorHinge)
-	local fromOpen = door:GetAttribute("DoorOpen") == true
-	door:SetAttribute("DoorOpen", open)
 	if open then
-		door.CanCollide = false -- never block players while swinging
+		door.Transparency = 1
+		door.CanCollide = false
+	else
+		door.Transparency = 0
+		door.CanCollide = true
 	end
-	task.spawn(function()
-		local steps = 18
-		local from = if fromOpen then math.rad(100) else 0
-		local to = if open then math.rad(100) else 0
-		for i = 1, steps do
-			if token ~= handles.DoorAnimToken then
-				return -- superseded
-			end
-			local t = i / steps
-			local angle = from + (to - from) * t
-			if door.Parent ~= nil then
-				door.CFrame = hingeCF * CFrame.Angles(0, angle, 0) * CFrame.new(handles.DoorOffset)
-			end
-			task.wait(0.035)
-		end
-		if door.Parent ~= nil then
-			door.CanCollide = not open
-		end
-	end)
-end
-
-function MapBuilder.SetDoorOpen(handles, open)
-	if not handles or not handles.Door then
-		return
-	end
-	if (handles.Door:GetAttribute("DoorOpen") == true) == (open == true) then
-		-- Already in the requested state; still enforce collision flags.
-		handles.Door.CanCollide = not open
-		return
-	end
-	animateDoor(handles, open == true)
 end
 
 function MapBuilder.SetBarrier(handles, blocked)
@@ -355,10 +327,10 @@ function MapBuilder.SetPromptsEnabled(handles, enabled)
 	end
 end
 
--- Teleports any player to a CFrame with full nil-safety. Returns true if the
--- character's root was moved. Never errors on missing/dead characters.
-local function teleportPlayerTo(player, cf)
-	if not player then
+-- True when the player's character root is physically inside the unit volume
+-- (with a small vertical tolerance). False for missing characters — safe.
+function MapBuilder.IsPlayerInsideUnit(handles, player)
+	if not handles or not player then
 		return false
 	end
 	local char = player.Character
@@ -369,28 +341,34 @@ local function teleportPlayerTo(player, cf)
 	if not root then
 		return false
 	end
+	local pos = root.Position
+	local center = handles.UnitCenter
+	return math.abs(pos.X - center.X) <= UNIT_W / 2
+		and math.abs(pos.Z - center.Z) <= UNIT_D / 2
+		and pos.Y >= handles.FloorTop - 3
+		and pos.Y <= handles.RoofTop + 3
+end
+
+-- Safety fallback only: moves the player outside if (and only if) they are
+-- still inside when the unit must close. Never touches players outside.
+-- Returns true when a move happened.
+function MapBuilder.MovePlayerOutsideIfInside(handles, player)
+	if not MapBuilder.IsPlayerInsideUnit(handles, player) then
+		return false
+	end
+	if not handles or not handles.ReturnCFrame then
+		return false
+	end
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
 	pcall(function()
 		root.AssemblyLinearVelocity = Vector3.zero
 		root.AssemblyAngularVelocity = Vector3.zero
 	end)
-	root.CFrame = cf
+	root.CFrame = handles.ReturnCFrame
 	return true
-end
-
-function MapBuilder.TeleportWinnerInside(handles, player)
-	if not handles or not handles.WinnerInsideCFrame then
-		return false
-	end
-	return teleportPlayerTo(player, handles.WinnerInsideCFrame)
-end
-
--- Safe return spot in front of the unit. Safe to call when the winner left,
--- died, or has no character: it simply does nothing and returns false.
-function MapBuilder.TeleportPlayerOutside(handles, player)
-	if not handles or not handles.WinnerReturnCFrame then
-		return false
-	end
-	return teleportPlayerTo(player, handles.WinnerReturnCFrame)
 end
 
 return MapBuilder

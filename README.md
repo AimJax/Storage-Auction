@@ -36,30 +36,36 @@ open boxes → reveal randomized items → sell/keep → next auction.
 ## Testing procedure (solo, M1 Definition of Done)
 1. In Studio: **Play** (F5). You spawn at (0,3,0), unit is at (0,0,40).
 2. Top bar shows state + countdown + bid + Cash (starts at $1000).
-3. WAIT (8s) → INSPECTION (15s, door fades, boxes visible, barrier blocks entry).
+3. WAIT (8s) → INSPECTION (15s, door disappears, boxes visible, barrier blocks entry).
 4. BIDDING (30s): press **BID $X**. NPCs (Dealer Dan, Collector Kate) will
    counter-bid. Outbid them.
-5. SOLD: if you won, Cash is deducted and you are teleported inside
-   (door swings open; invisible barrier keeps everyone else out).
-   If an NPC won, wait for reset (~5s Cleanup → Waiting → next loop).
-6. As winner during RUMMAGING: walk to a box, hold **E** (ProximityPrompt).
-   Opened boxes dim and their prompts turn off. Reveal panel (compact,
-   centered) shows Name / Rarity / Condition / Value.
+5. SOLD: if you won, Cash is deducted — you stay exactly where you are.
+   No teleport. The entrance opens (door gone; barrier drops at Rummaging).
+   If an NPC won, you never gain access; wait for reset (~5s Cleanup →
+   Waiting → next loop).
+6. As winner during RUMMAGING: physically WALK into the unit whenever you
+   like, hold **E** on a box. Opened boxes dim and their prompts turn off.
+   You may walk back out freely at any time. Anyone may walk in, but only
+   the winner can open boxes (others get a rejection toast).
+   Reveal panel (compact, centered) shows Name / Rarity / Condition / Value.
 7. Press **SELL** → Cash increases, panel auto-closes. **KEEP** → panel
    auto-closes, item stays in your **Bag** (bottom-right button, hidden
    by default — click to open).
-8. Open all 3 boxes (or wait 90s) → Cleanup: you are teleported back
-   outside facing the unit, door swings shut → Waiting → next auction.
+8. Open all 3 boxes (or wait 90s) → Cleanup: entrance stays open as a grace
+   period so you can walk out naturally. If you are still inside when the
+   next auction resets, you are moved to a safe spot outside (safety
+   fallback only) and the door reappears → Waiting → next auction.
 
 Multi-client: Studio **Test** tab → **Clients and Servers** → 2 Players →
 **Start**. Bid from one window, watch the other update.
 
 ## Known limitations (M1)
-- During Rummaging the invisible barrier stays up: only the teleported winner
-  is inside. If the winner dies mid-rummage they respawn outside and must wait
-  for the timer — the loop still completes safely, nobody gets trapped.
-- Non-winners standing at the open doorway are within prompt range but the
-  server rejects their opens; prompts are also distance-limited (10 studs).
+- Rummaging is physically open: anyone may walk in, but only the winner can
+  open boxes (server-enforced, rejection toast otherwise).
+- If a player is still inside when the next auction resets, they are moved
+  to a safe spot outside (safety fallback only — normal play never moves you).
+- If the winner dies mid-rummage they respawn outside and can simply walk
+  back in; unopened boxes wait until the timer expires.
 - Inventory Keep is session-only; only Cash persists via DataStore.
 - No anti-exploit rate limiting beyond server validation; no admin tools.
 - Timings/economy are placeholder-tuned in `src/shared/GameConfig.luau`.

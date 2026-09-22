@@ -352,7 +352,7 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName)
 			setHint("Outbid your rivals to win the unit")
 		elseif state == "Rummaging" then
 			if snapshot.winner == localPlayerName then
-				setHint("You won! Press E on each box")
+				setHint("You won! Walk in and press E on each box")
 			else
 				setHint("Winner is rummaging: " .. tostring(snapshot.winner or ""))
 			end

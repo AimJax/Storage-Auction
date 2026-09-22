@@ -42,6 +42,7 @@ local GameConfig = {
 		CashChanged = "CashChanged",
 		ItemRevealed = "ItemRevealed",
 		InventoryChanged = "InventoryChanged",
+		Notify = "Notify",
 		PlaceBid = "PlaceBid",
 		OpenContainer = "OpenContainer",
 		SellItem = "SellItem",

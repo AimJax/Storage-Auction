@@ -85,6 +85,9 @@ function AuctionClient.Start()
 			UIController.ShowReveal(item)
 		end
 	end)
+	getRemote(GameConfig.RemoteNames.Notify, "RemoteEvent").OnClientEvent:Connect(function(text)
+		UIController.ShowToast(tostring(text))
+	end)
 
 	-- Bid
 	refs.BidButton.MouseButton1Click:Connect(function()

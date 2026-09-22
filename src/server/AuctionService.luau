@@ -188,28 +188,16 @@ function AuctionService.GetSnapshot()
 	}
 end
 
-local function teleportWinnerInside()
-	if WinnerUserId == nil then
+-- Safety sweep only: right before the unit closes for the next auction,
+-- move out anyone still physically inside. Any other time, players walk
+-- freely and are never relocated. Never errors on missing characters.
+local function ejectAnyoneStillInside()
+	if MapHandles == nil then
 		return
 	end
-	local player = Players:GetPlayerByUserId(WinnerUserId)
-	if not player then
-		return
+	for _, player in ipairs(Players:GetPlayers()) do
+		MapBuilder.MovePlayerOutsideIfInside(MapHandles, player)
 	end
-	MapBuilder.TeleportWinnerInside(MapHandles, player)
-end
-
--- MUST run before the door/barrier closes on Cleanup. Nil-safe: does nothing
--- if the winner left, died, or has no character (respawn is already outside).
-local function returnWinnerOutside()
-	if WinnerUserId == nil then
-		return
-	end
-	local player = Players:GetPlayerByUserId(WinnerUserId)
-	if not player then
-		return
-	end
-	MapBuilder.TeleportPlayerOutside(MapHandles, player)
 end
 
 local function finishBidding()
@@ -279,11 +267,10 @@ local function stateLoop()
 		elseif State == "Sold" then
 			if timeLeft() <= 0 then
 				if WinnerUserId ~= nil then
-					-- Door stays open; the barrier stays up so only the
-					-- teleported winner is inside. Prompts turn on for them.
-					MapBuilder.SetBarrier(MapHandles, true)
+					-- Player won: no teleport. Entrance opens, winner walks
+					-- in whenever they choose. Prompts turn on for Rummaging.
+					MapBuilder.SetBarrier(MapHandles, false)
 					MapBuilder.SetPromptsEnabled(MapHandles, true)
-					teleportWinnerInside()
 					setState("Rummaging", GameConfig.RummageDuration)
 				else
 					-- NPC won or no bids: show result, then next auction.
@@ -301,17 +288,18 @@ local function stateLoop()
 				end
 			end
 			if allOpened or timeLeft() <= 0 then
-				-- Order matters: winner out FIRST, then prompts off and
-				-- door closes. Nobody is ever sealed inside.
-				returnWinnerOutside()
+				-- Cleanup is a grace period: prompts off, but the entrance
+				-- stays open so everyone can walk out naturally.
 				MapBuilder.SetPromptsEnabled(MapHandles, false)
-				MapBuilder.SetDoorOpen(MapHandles, false)
-				MapBuilder.SetBarrier(MapHandles, true)
+				MapBuilder.SetBarrier(MapHandles, false)
 				setState("Cleanup", GameConfig.CleanupDuration)
 			end
 			task.wait(0.5)
 		elseif State == "Cleanup" then
 			if timeLeft() <= 0 then
+				-- Unit is about to close: safety-eject anyone still inside,
+				-- then reset. Nobody can be sealed in.
+				ejectAnyoneStillInside()
 				resetForNextAuction()
 				setState("Waiting", GameConfig.WaitingDuration)
 			end
@@ -354,13 +342,20 @@ function AuctionService.Init(deps)
 	end
 
 	-- ProximityPrompt path (server-authoritative, no client trust needed).
+	-- Rejections are pushed back as toasts so non-winners get feedback.
 	if MapHandles then
 		for containerId, box in pairs(MapHandles.Containers) do
 			local prompt = box:FindFirstChildOfClass("ProximityPrompt")
 			if prompt then
 				prompt.Enabled = false
 				prompt.Triggered:Connect(function(player)
-					AuctionService.TryOpenContainer(player, containerId)
+					local ok, result = AuctionService.TryOpenContainer(player, containerId)
+					if not ok then
+						local notify = Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
+						if notify then
+							notify:FireClient(player, tostring(result))
+						end
+					end
 				end)
 			end
 		end

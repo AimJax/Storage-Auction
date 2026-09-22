@@ -28,6 +28,7 @@ local function ensureRemotes()
 		{ GameConfig.RemoteNames.CashChanged, "RemoteEvent" },
 		{ GameConfig.RemoteNames.ItemRevealed, "RemoteEvent" },
 		{ GameConfig.RemoteNames.InventoryChanged, "RemoteEvent" },
+		{ GameConfig.RemoteNames.Notify, "RemoteEvent" },
 		{ GameConfig.RemoteNames.PlaceBid, "RemoteFunction" },
 		{ GameConfig.RemoteNames.OpenContainer, "RemoteFunction" },
 		{ GameConfig.RemoteNames.SellItem, "RemoteFunction" },
