@@ -166,6 +166,13 @@ function MapBuilder.GetHandles()
 	stealthMarker(unitBounds)
 	stealthMarker(bidCenter)
 	stealthMarker(returnPoint)
+	-- The barrier must start invisible even before the first state reset.
+	-- (Collision itself is driven by SetBarrier during state transitions.)
+	if barrier then
+		barrier.Transparency = 1
+		barrier.CanTouch = false
+		barrier.CanQuery = false
+	end
 	local index = 0
 	for _, box in pairs(containers) do
 		index += 1
@@ -214,9 +221,16 @@ function MapBuilder.SetDoorOpen(handles, open)
 end
 
 function MapBuilder.SetBarrier(handles, blocked)
-	if handles and handles.Barrier and handles.Barrier.Parent ~= nil then
-		handles.Barrier.CanCollide = blocked
+	if not handles or not handles.Barrier or handles.Barrier.Parent == nil then
+		return
 	end
+	-- The barrier is a collision volume ONLY. It must never be visible,
+	-- regardless of what the authored map file says (Argon does not even
+	-- serialize Transparency for it). Only collision is state-driven.
+	handles.Barrier.Transparency = 1
+	handles.Barrier.CanTouch = false
+	handles.Barrier.CanQuery = false
+	handles.Barrier.CanCollide = blocked
 end
 
 function MapBuilder.ResetContainers(handles)

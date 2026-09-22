@@ -14,7 +14,8 @@ local GameConfig = {
 
 	-- Bidding is local: players must stand within BidRadius (studs, XZ) of
 	-- the auction area center in front of the unit. Server-authoritative.
-	BidRadius = 35,
+	-- Radius covers chairs (~11), mat (~12), door (10) and boxes (~22).
+	BidRadius = 24,
 
 	-- Rummaging decision grace: if the timer expires while the winner still
 	-- has an unresolved item, they get this many extra seconds (prompts off)

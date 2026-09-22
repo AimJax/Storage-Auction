@@ -301,17 +301,30 @@ end
 -- when leaving Rummaging, toast cleared so nothing goes stale.
 -- bidAllowed (from the local proximity check) gates the BID button during
 -- Bidding; nil counts as allowed so the button works before the first check.
+-- Outside the auction radius the whole auction HUD (bid pill, state pill,
+-- bid button, hint, toasts) hides; Cash, Bag, inventory and reveal never hide.
 function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 	local state = snapshot.state or "Waiting"
 	local transitioned = state ~= lastState
 	lastState = state
 	local canBid = bidAllowed ~= false
+	local showAuction = canBid
 
 	if transitioned then
 		UIController.HideToast()
 		if state ~= "Rummaging" then
 			UIController.HideReveal()
 		end
+	end
+
+	if not showAuction then
+		UIController.HideToast()
+	end
+	if refs.BidFrame then
+		refs.BidFrame.Visible = showAuction
+	end
+	if refs.StateFrame then
+		refs.StateFrame.Visible = showAuction
 	end
 
 	if refs.StateLabel then
@@ -349,14 +362,12 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 	end
 
 	if transitioned or state == "Rummaging" or state == "Bidding" then
-		if state == "Inspection" then
+		if not showAuction then
+			setHint(nil)
+		elseif state == "Inspection" then
 			setHint("Inspect the unit before bidding begins")
 		elseif state == "Bidding" then
-			if canBid then
-				setHint("Outbid your rivals to win the unit")
-			else
-				setHint("Move closer to join the auction")
-			end
+			setHint("Outbid your rivals to win the unit")
 		elseif state == "Rummaging" then
 			if snapshot.winner == localPlayerName then
 				setHint("You won! Walk in and press E on each box")

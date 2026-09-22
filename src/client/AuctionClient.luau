@@ -16,6 +16,9 @@ local remotes = nil
 local snapshot = { state = "Waiting", timeLeft = 0, currentBid = 0, bidder = "", minIncrement = 25, winner = "" }
 local cash = 0
 local lastSeenBid = -1
+-- Local auction-radius flag (UX only; the server validates every bid).
+-- Auction toasts/hints follow it; Sell/Keep feedback always shows.
+local inRadius = true
 
 local function getRemote(name, className)
 	local r = remotes:FindFirstChild(name)
@@ -39,7 +42,10 @@ end
 function AuctionClient.Start()
 	remotes = ReplicatedStorage:WaitForChild(GameConfig.RemotesFolderName)
 	local refs = UIController.Build()
-	UIController.UpdateStatus(snapshot, cash, player.Name)
+	local function refresh()
+		UIController.UpdateStatus(snapshot, cash, player.Name, inRadius)
+	end
+	refresh()
 
 	-- Server -> client streams
 	getRemote(GameConfig.RemoteNames.AuctionState, "RemoteEvent").OnClientEvent:Connect(function(data)
@@ -48,9 +54,11 @@ function AuctionClient.Start()
 		end
 		local prevState = snapshot.state
 		snapshot = data
-		UIController.UpdateStatus(snapshot, cash, player.Name)
+		refresh()
 		-- Toast rival bids as they happen (not on every broadcast tick).
-		if snapshot.state == "Bidding"
+		-- Auction toasts only make sense inside the radius.
+		if inRadius
+			and snapshot.state == "Bidding"
 			and (snapshot.currentBid or 0) > lastSeenBid
 			and (snapshot.bidder or "") ~= ""
 			and snapshot.bidder ~= player.Name
@@ -60,20 +68,22 @@ function AuctionClient.Start()
 		lastSeenBid = snapshot.currentBid or 0
 		if snapshot.state == "Sold" and prevState ~= "Sold" then
 			lastSeenBid = -1 -- reset for next auction
-			if snapshot.winner and snapshot.winner ~= "" then
-				if snapshot.winner == player.Name then
-					UIController.ShowToast("You won the unit for $" .. formatMoney(snapshot.currentBid) .. "!", 4)
+			if inRadius then
+				if snapshot.winner and snapshot.winner ~= "" then
+					if snapshot.winner == player.Name then
+						UIController.ShowToast("You won the unit for $" .. formatMoney(snapshot.currentBid) .. "!", 4)
+					else
+						UIController.ShowToast(snapshot.winner .. " won for $" .. formatMoney(snapshot.currentBid))
+					end
 				else
-					UIController.ShowToast(snapshot.winner .. " won for $" .. formatMoney(snapshot.currentBid))
+					UIController.ShowToast("No winner this round")
 				end
-			else
-				UIController.ShowToast("No winner this round")
 			end
 		end
 	end)
 	getRemote(GameConfig.RemoteNames.CashChanged, "RemoteEvent").OnClientEvent:Connect(function(amount)
 		cash = tonumber(amount) or 0
-		UIController.UpdateStatus(snapshot, cash, player.Name)
+		refresh()
 	end)
 	getRemote(GameConfig.RemoteNames.InventoryChanged, "RemoteEvent").OnClientEvent:Connect(function(items)
 		if typeof(items) == "table" then
@@ -90,9 +100,13 @@ function AuctionClient.Start()
 			if payload.closeReveal then
 				UIController.HideReveal()
 			end
-			UIController.ShowToast(tostring(payload.text))
+			if inRadius then
+				UIController.ShowToast(tostring(payload.text))
+			end
 		else
-			UIController.ShowToast(tostring(payload))
+			if inRadius then
+				UIController.ShowToast(tostring(payload))
+			end
 		end
 	end)
 
@@ -115,7 +129,7 @@ function AuctionClient.Start()
 			end
 			if res.snapshot then
 				snapshot = res.snapshot
-				UIController.UpdateStatus(snapshot, cash, player.Name)
+				refresh()
 			end
 		else
 			UIController.ShowToast("Bid failed")
@@ -158,12 +172,14 @@ function AuctionClient.Start()
 		end
 	end)
 
-	-- Local proximity check for the BID button (UX only; server validates).
-	-- Runs on a slow tick so movement updates without spamming anything.
+	-- Local proximity check for the auction HUD (UX only; server validates).
+	-- Runs on a slow tick so entering/leaving the radius updates immediately
+	-- without spamming anything.
 	task.spawn(function()
 		while true do
 			task.wait(0.5)
-			UIController.UpdateStatus(snapshot, cash, player.Name, AuctionClient.IsWithinBidRadius())
+			inRadius = AuctionClient.IsWithinBidRadius()
+			refresh()
 		end
 	end)
 end
