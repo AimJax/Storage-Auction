@@ -91,14 +91,9 @@ local function pregenerateContents()
 	ContainerItems = {}
 	ContainerOpened = {}
 	local rng = Random.new()
-	if MapHandles then
-		for containerId, _box in pairs(MapHandles.Containers) do
-			ContainerItems[containerId] = ItemUtils.GenerateInstance(rng)
-		end
-	else
-		for i = 1, GameConfig.ContainersPerUnit do
-			ContainerItems["box_" .. i] = ItemUtils.GenerateInstance(rng)
-		end
+	-- Container set is discovered from the Studio map (see MapBuilder).
+	for containerId, _box in pairs(MapHandles.Containers) do
+		ContainerItems[containerId] = ItemUtils.GenerateInstance(rng)
 	end
 	HiddenValue = hiddenTotal()
 end

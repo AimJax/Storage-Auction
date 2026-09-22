@@ -29,7 +29,8 @@ local GameConfig = {
 	RummageDuration = 90,
 	CleanupDuration = 5,
 
-	-- Unit contents (prototype: 1 unit, 3 containers)
+	-- Unit contents: the Studio map owns the real container set
+-- (StorageAuctionMap.StorageUnit.Container_*). This documents the M1 intent.
 	ContainersPerUnit = 3,
 
 	-- Value formula: FinalValue = floor(BaseValue * RarityMult * ConditionMult)

@@ -24,8 +24,10 @@ Rojo file-sync project (`default.project.json`):
 - `src/client/` → StarterPlayerScripts.Client (UI + remote wiring only).
 
 Runtime-created instances (no manual Studio setup): `ReplicatedStorage/SA_Remotes`
-folder with 4 RemoteEvents + 3 RemoteFunctions; `Workspace/SA_Unit` map;
-`leaderstats/Cash`. Server builds all of this on start.
+folder with 4 RemoteEvents + 4 RemoteFunctions; `leaderstats/Cash`. The map
+(`Workspace/StorageAuctionMap`) is STUDIO-OWNED: it lives in the `.rbxl`
+place file, is hand-editable, and Rojo never touches Workspace (see
+`default.project.json` — no Workspace mapping).
 
 ### Server modules (`src/server/`)
 - `init.server.luau` — bootstrap: remotes, services, map, auction loop, players.
@@ -36,7 +38,9 @@ folder with 4 RemoteEvents + 3 RemoteFunctions; `Workspace/SA_Unit` map;
 - `ItemGenerationService` logic lives in shared `ItemUtils.GenerateInstance`
   (server calls it; client never generates).
 - `NPCBidderService.luau` — maxWilling = hiddenValue × noise; chance + delay.
-- `MapBuilder.luau` — builds unit/door/barrier/containers/prompts at runtime.
+- `MapBuilder.luau` — map BEHAVIOR over Studio-authored geometry: locates and
+  validates `Workspace/StorageAuctionMap`, drives door/barrier/prompts/bounds.
+  Never creates parts. Missing required pieces error clearly in Output.
 - `PlayerDataService.luau` — DataStore (pcall-guarded; session-only fallback).
 
 ### Client modules (`src/client/`)

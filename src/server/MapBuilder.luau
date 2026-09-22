@@ -1,346 +1,201 @@
 --!nonstrict
--- StorageAuction M1 — builds the physical prototype map at runtime.
--- Creates 1 storage unit + N containers + spawn, so no manual Studio
--- building is required. Returns handles the AuctionService drives.
+-- StorageAuction M1 — map behavior over STUDIO-AUTHORED geometry.
 --
--- Ground rule: exactly ONE exterior ground surface (the world's Baseplate).
--- The unit has its own interior floor slab whose top sits FLOOR_RISE studs
--- above the exterior ground — a real vertical separation, so no Z-fighting.
--- All Y positions derive from the detected ground top; nothing hard-codes
--- absolute heights except the unit's XZ location.
+-- OWNERSHIP RULE: Studio owns static world geometry. This module owns
+-- behavior/state only. It NEVER creates map parts. It locates
+--   Workspace.StorageAuctionMap
+-- validates the required pieces, and drives door/barrier/prompts/bounds.
 --
--- Door rule (M1 simple): the door only appears/disappears. No swing, no
--- animation. Closed = visible + colliding. Open = invisible + non-colliding.
+-- Expected hierarchy (see tools/BuildMapOnce.luau, the one-time migration
+-- script that generated the initial layout):
 --
--- Access philosophy: players walk freely. Nobody is routinely teleported;
--- MovePlayerOutsideIfInside is a safety fallback used only right before the
--- unit closes for the next auction.
+--   Workspace
+--   → StorageAuctionMap (Model)
+--     → StorageUnit (Model)
+--         Floor, LeftWall, RightWall, BackWall, Roof ( Parts, optional decor)
+--         Door (Part, REQUIRED — visibility/collision driven)
+--         Barrier (Part, REQUIRED — collision driven)
+--         Sign (Part + SurfaceGui, optional)
+--         Container_1..N (Parts, REQUIRED ≥1 — ContainerId attr, prompts)
+--         UnitBounds (Part marker, optional — falls back to unit extents)
+--         ReturnPoint (Part marker, REQUIRED — safety-eject destination)
+--     → AuctionArea (Model, optional container)
+--         BidCenter (Part marker, REQUIRED — bid-radius center)
+--         Mat (Part, optional)
+--         Seats (Model, optional) → Chair_i (Model) → Seat + Post + Back
+--     → SpawnLocation (optional — engine-owned; warned if absent)
 --
--- Layout (studs): unit centered at (0, *, 40), opening faces -Z (spawn side).
+-- Rojo does NOT manage Workspace (see default.project.json), so manual
+-- Studio edits to this hierarchy are never overwritten by code sync.
 
 local MapBuilder = {}
 
-local UNIT_CX, UNIT_CZ = 0, 40
-local UNIT_W, UNIT_H, UNIT_D = 24, 12, 18
-local WALL_T = 1
-local FLOOR_RISE = 0.2 -- interior floor top above exterior ground (no coplanar faces)
-local RETURN_OFFSET_FRONT = 7
+local MAP_NAME = "StorageAuctionMap"
+local UNIT_NAME = "StorageUnit"
+local AREA_NAME = "AuctionArea"
+local SEATS_NAME = "Seats"
 
-local containerColors = {
-	Color3.fromRGB(170, 120, 70),
-	Color3.fromRGB(100, 140, 180),
-	Color3.fromRGB(140, 110, 160),
-}
-
-local function makePart(props, parent)
-	local p = Instance.new("Part")
-	p.Anchored = true
-	for k, v in pairs(props) do
-		p[k] = v
-	end
-	p.Parent = parent
-	return p
+local function failMissing(list)
+	error(
+		"[SA] Incomplete StorageAuctionMap — missing: "
+			.. table.concat(list, ", ")
+			.. ". Restore them in Studio (see tools/BuildMapOnce.luau), then Play again.",
+		0
+	)
 end
 
--- Returns the Y of the existing ground surface under the unit, or nil.
-local function detectGroundTop()
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = {}
-	local legacy = game.Workspace:FindFirstChild("SA_Baseplate")
-	if legacy then
-		params.FilterDescendantsInstances = { legacy }
+-- Defensive fix-ups for marker parts: never visible/colliding in Play.
+-- (Edit-time visibility is the user's choice; runtime forces stealth.)
+local function stealthMarker(part)
+	if not part then
+		return
 	end
-	local origin = Vector3.new(UNIT_CX, 200, UNIT_CZ)
-	local result = game.Workspace:Raycast(origin, Vector3.new(0, -600, 0), params)
-	if result then
-		return result.Position.Y
-	end
-	return nil
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanTouch = false
+	part.CanQuery = false
+	part.Transparency = 1
 end
 
-local function ensureGround()
-	local workspace = game.Workspace
-	local legacy = workspace:FindFirstChild("SA_Baseplate")
-	local groundTop = detectGroundTop()
-	if groundTop ~= nil then
-		-- Real ground exists: remove our legacy plane so surfaces never overlap.
-		if legacy then
-			legacy:Destroy()
-		end
-		return groundTop
-	end
-	if legacy and legacy:IsA("BasePart") then
-		-- No other ground, but our plane from an earlier run exists: reuse it.
-		return legacy.Position.Y + legacy.Size.Y / 2
-	end
-	-- No ground at all: create exactly one clean plane, top at y = 0.
-	local ground = makePart({
-		Name = "SA_Baseplate",
-		Size = Vector3.new(256, 2, 256),
-		Position = Vector3.new(0, -1, 20),
-		Color = Color3.fromRGB(80, 120, 80),
-		Material = Enum.Material.Grass,
-	}, workspace)
-	ground.Locked = true
-	return 0
-end
-
-local function ensureSpawn(groundTop)
-	local workspace = game.Workspace
-	local spawn = workspace:FindFirstChildOfClass("SpawnLocation")
-	if spawn then
-		-- Keep the place's spawn, but make sure it rests on the ground.
-		spawn.Position = Vector3.new(spawn.Position.X, groundTop + 3, spawn.Position.Z)
-		return spawn
-	end
-	spawn = Instance.new("SpawnLocation")
-	spawn.Anchored = true
-	spawn.Size = Vector3.new(6, 1, 6)
-	spawn.Position = Vector3.new(0, groundTop + 3, -6)
-	spawn.Neutral = true
-	spawn.AllowTeamChangeOnTouch = false
-	spawn.Duration = 0
-	spawn.Parent = workspace
-	return spawn
-end
-
-function MapBuilder.Build(numContainers)
-	local workspace = game.Workspace
-
-	-- Remove previous unit BEFORE ground detection so its roof/walls can
-	-- never be mistaken for the ground surface by the raycast.
-	local old = workspace:FindFirstChild("SA_Unit")
-	if old then
-		old:Destroy()
-	end
-
-	local groundTop = ensureGround()
-	ensureSpawn(groundTop)
-
-	local unit = Instance.new("Model")
-	unit.Name = "SA_Unit"
-
-	local cx, cz = UNIT_CX, UNIT_CZ
-	local floorTop = groundTop + FLOOR_RISE -- interior walking surface
-	local frontZ = cz - UNIT_D / 2
-	local backZ = cz + UNIT_D / 2
-	local roofTop = floorTop + UNIT_H + WALL_T
-
-	-- Interior floor slab: top face FLOOR_RISE above exterior ground.
-	makePart({
-		Name = "Floor",
-		Size = Vector3.new(UNIT_W, WALL_T, UNIT_D),
-		Position = Vector3.new(cx, floorTop - WALL_T / 2, cz),
-		Color = Color3.fromRGB(120, 120, 120),
-		Material = Enum.Material.Concrete,
-	}, unit)
-
-	-- Walls stand ON the interior floor (no gaps underneath), outer faces
-	-- flush with the slab edges.
-	makePart({
-		Name = "BackWall",
-		Size = Vector3.new(UNIT_W, UNIT_H, WALL_T),
-		Position = Vector3.new(cx, floorTop + UNIT_H / 2, backZ - WALL_T / 2),
-		Color = Color3.fromRGB(150, 75, 60),
-		Material = Enum.Material.CorrodedMetal,
-	}, unit)
-	makePart({
-		Name = "LeftWall",
-		Size = Vector3.new(WALL_T, UNIT_H, UNIT_D),
-		Position = Vector3.new(cx - UNIT_W / 2 + WALL_T / 2, floorTop + UNIT_H / 2, cz),
-		Color = Color3.fromRGB(150, 75, 60),
-		Material = Enum.Material.CorrodedMetal,
-	}, unit)
-	makePart({
-		Name = "RightWall",
-		Size = Vector3.new(WALL_T, UNIT_H, UNIT_D),
-		Position = Vector3.new(cx + UNIT_W / 2 - WALL_T / 2, floorTop + UNIT_H / 2, cz),
-		Color = Color3.fromRGB(150, 75, 60),
-		Material = Enum.Material.CorrodedMetal,
-	}, unit)
-	-- Roof rests on the walls, flush footprint.
-	makePart({
-		Name = "Roof",
-		Size = Vector3.new(UNIT_W, WALL_T, UNIT_D),
-		Position = Vector3.new(cx, floorTop + UNIT_H + WALL_T / 2, cz),
-		Color = Color3.fromRGB(80, 80, 85),
-		Material = Enum.Material.Metal,
-	}, unit)
-
-	-- Front door: fills the opening. Only shown/hidden, never animated.
-	-- (A proper rolling shutter can replace this later.)
-	local door = makePart({
-		Name = "Door",
-		Size = Vector3.new(UNIT_W - 2 * WALL_T, UNIT_H, 0.6),
-		Position = Vector3.new(cx, floorTop + UNIT_H / 2, frontZ),
-		Color = Color3.fromRGB(180, 180, 190),
-		Material = Enum.Material.Metal,
-	}, unit)
-	door:SetAttribute("IsDoor", true)
-
-	-- Invisible barrier used ONLY while players must look but not enter
-	-- (Inspection/Bidding). Never active during Rummaging.
-	local barrier = makePart({
-		Name = "Barrier",
-		Size = Vector3.new(UNIT_W - 2 * WALL_T, UNIT_H, 0.5),
-		Position = Vector3.new(cx, floorTop + UNIT_H / 2, frontZ),
-		Transparency = 1,
-		CanCollide = true,
-		CanQuery = false,
-	}, unit)
-
-	-- Physical sign board sitting on the roof, front edge. World-space
-	-- SurfaceGui on the -Z face: obeys the world, never renders through
-	-- geometry, never fights the screen-space HUD.
-	local sign = makePart({
-		Name = "Sign",
-		Size = Vector3.new(18, 2.5, 0.6),
-		Position = Vector3.new(cx, roofTop + 1.3, frontZ),
-		Color = Color3.fromRGB(40, 40, 45),
-	}, unit)
-	do
-		local surface = Instance.new("SurfaceGui")
-		surface.Face = Enum.NormalId.Back -- -Z: faces approaching players
-		surface.CanvasSize = Vector2.new(600, 84)
-		local label = Instance.new("TextLabel")
-		label.Size = UDim2.fromScale(1, 1)
-		label.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-		label.BorderSizePixel = 0
-		label.Text = "STORAGE — UNIT 1"
-		label.TextScaled = true
-		label.TextColor3 = Color3.new(1, 1, 1)
-		label.Font = Enum.Font.GothamBold
-		label.Parent = surface
-		surface.Parent = sign
-	end
-
-	-- Containers: centered row toward the back, clearly visible from the front.
-	local containers = {}
-	for i = 1, (numContainers or 3) do
-		local xOff = (i - 2) * 6 -- -6, 0, +6
-		local box = makePart({
-			Name = "Container_" .. i,
-			Size = Vector3.new(4, 4, 4),
-			Position = Vector3.new(cx + xOff, floorTop + 2, cz + 2),
-			Color = containerColors[((i - 1) % #containerColors) + 1],
-			Material = Enum.Material.WoodPlanks,
-		}, unit)
-		box:SetAttribute("ContainerId", "box_" .. i)
-		box:SetAttribute("Opened", false)
-
-		local prompt = Instance.new("ProximityPrompt")
-		prompt.ObjectText = "Storage Box " .. i
+local function standardPrompt(box, index)
+	local prompt = box:FindFirstChildOfClass("ProximityPrompt")
+	if not prompt then
+		prompt = Instance.new("ProximityPrompt")
+		prompt.ObjectText = "Storage Box " .. tostring(index)
 		prompt.ActionText = "Open"
 		prompt.HoldDuration = 0.4
 		prompt.MaxActivationDistance = 10
 		prompt.RequiresLineOfSight = false
-		prompt.Enabled = false
 		prompt.Parent = box
+	end
+	prompt.Enabled = false
+	return prompt
+end
 
-		containers["box_" .. i] = box
+-- Locate + validate the Studio-authored map. Errors clearly on missing
+-- REQUIRED pieces (never silently rebuilds). Returns opaque handles.
+function MapBuilder.GetHandles()
+	local workspace = game.Workspace
+	local map = workspace:WaitForChild(MAP_NAME, 15)
+	if not map then
+		failMissing({ "Workspace." .. MAP_NAME .. " (run tools/BuildMapOnce.luau once, then Save the place)" })
 	end
 
-	-- Safe return spot: several studs in front of the door, facing the unit.
-	-- Used ONLY as a safety fallback, never during normal play.
-	local outsidePos = Vector3.new(cx, floorTop + 4, frontZ - RETURN_OFFSET_FRONT)
-	local outsideFace = Vector3.new(cx, floorTop + 2, frontZ)
+	local missing = {}
+	local function req(parent, name, path)
+		if not parent then
+			table.insert(missing, path)
+			return nil
+		end
+		local inst = parent:FindFirstChild(name)
+		if not inst then
+			table.insert(missing, path)
+		end
+		return inst
+	end
 
-	unit.Parent = workspace
+	local unitPath = MAP_NAME .. "." .. UNIT_NAME
+	local unit = req(map, UNIT_NAME, unitPath)
+	local door = req(unit, "Door", unitPath .. ".Door")
+	local barrier = req(unit, "Barrier", unitPath .. ".Barrier")
+	local floorPart = req(unit, "Floor", unitPath .. ".Floor")
+	local returnPoint = req(unit, "ReturnPoint", unitPath .. ".ReturnPoint")
 
-	-- Auction viewing area + seating (separate model, in front of the unit).
-	-- BidCenter doubles as the server-authoritative bid-radius center.
-	local bidCenter = Vector3.new(cx, floorTop, frontZ - 10)
-	MapBuilder.BuildForecourt(workspace, groundTop, bidCenter)
+	local area = map:FindFirstChild(AREA_NAME)
+	local bidCenter = req(area, "BidCenter", MAP_NAME .. "." .. AREA_NAME .. ".BidCenter")
+
+	-- Containers: discover every Container_* part (freely repositionable).
+	local containers = {}
+	if unit then
+		for _, child in ipairs(unit:GetChildren()) do
+			if child:IsA("BasePart") and string.match(child.Name, "^Container_") then
+				local id = child:GetAttribute("ContainerId")
+				if typeof(id) ~= "string" or id == "" then
+					id = child.Name
+					child:SetAttribute("ContainerId", id)
+				end
+				containers[id] = child
+			end
+		end
+	end
+	local containerCount = 0
+	for _ in pairs(containers) do
+		containerCount += 1
+	end
+	if containerCount == 0 then
+		table.insert(missing, unitPath .. ".Container_1 (at least one Container_* part)")
+	end
+
+	if #missing > 0 then
+		failMissing(missing)
+	end
+
+	-- Type-check the required instances (a Model renamed to Door helps nobody).
+	local typeErrors = {}
+	if not door:IsA("BasePart") then
+		table.insert(typeErrors, unitPath .. ".Door must be a Part")
+	end
+	if not barrier:IsA("BasePart") then
+		table.insert(typeErrors, unitPath .. ".Barrier must be a Part")
+	end
+	if not floorPart:IsA("BasePart") then
+		table.insert(typeErrors, unitPath .. ".Floor must be a Part")
+	end
+	if not bidCenter:IsA("BasePart") then
+		table.insert(typeErrors, MAP_NAME .. "." .. AREA_NAME .. ".BidCenter must be a Part")
+	end
+	if not returnPoint:IsA("BasePart") then
+		table.insert(typeErrors, unitPath .. ".ReturnPoint must be a Part")
+	end
+	if #typeErrors > 0 then
+		failMissing(typeErrors)
+	end
+
+	-- Optional pieces: use when present, ignore when absent.
+	local unitBounds = unit:FindFirstChild("UnitBounds")
+	if unitBounds and not unitBounds:IsA("BasePart") then
+		unitBounds = nil
+	end
+	if map:FindFirstChild("SpawnLocation") == nil
+		and workspace:FindFirstChildOfClass("SpawnLocation") == nil
+	then
+		warn("[SA] No SpawnLocation found; players may spawn at the origin. Add one under " .. MAP_NAME .. ".")
+	end
+
+	-- Runtime stealth for markers + prompt setup (state itself comes later).
+	stealthMarker(unitBounds)
+	stealthMarker(bidCenter)
+	stealthMarker(returnPoint)
+	local index = 0
+	for _, box in pairs(containers) do
+		index += 1
+		standardPrompt(box, index)
+	end
+
+	local floorTop = floorPart.Position.Y + floorPart.Size.Y / 2
+	local center: Vector3
+	local boundHalf: Vector3
+	if unitBounds then
+		center = unitBounds.Position
+		boundHalf = unitBounds.Size / 2
+	else
+		local cf, size = unit:GetBoundingBox()
+		center = cf.Position
+		boundHalf = size / 2
+	end
 
 	return {
+		Map = map,
 		Unit = unit,
 		Door = door,
 		Barrier = barrier,
 		Containers = containers,
-		UnitCenter = Vector3.new(cx, floorTop, cz),
+		UnitCenter = Vector3.new(center.X, floorTop, center.Z),
+		BoundHalf = boundHalf,
 		FloorTop = floorTop,
-		RoofTop = roofTop,
-		FrontZ = frontZ,
-		BidCenter = bidCenter,
-		ReturnCFrame = CFrame.lookAt(outsidePos, outsideFace),
+		BidCenter = bidCenter.Position,
+		ReturnCFrame = returnPoint.CFrame,
 	}
-end
-
--- Subtle forecourt in front of the unit: a low dark mat marking the standing
--- area plus 4 simple Seat chairs (two pairs) facing the unit. Everything is
--- placeholder geometry; the mat top sits above the ground (no coplanar faces)
--- and chairs stand clear of spawn, entrance, and each other.
-function MapBuilder.BuildForecourt(workspace, groundTop, bidCenter)
-	local old = workspace:FindFirstChild("SA_Furniture")
-	if old then
-		old:Destroy()
-	end
-	local furniture = Instance.new("Model")
-	furniture.Name = "SA_Furniture"
-
-	-- Standing-area mat: thin, dark, clearly below foot height.
-	makePart({
-		Name = "AuctionMat",
-		Size = Vector3.new(20, 0.1, 12),
-		Position = Vector3.new(bidCenter.X, groundTop + 0.05, bidCenter.Z),
-		Color = Color3.fromRGB(55, 55, 65),
-		Material = Enum.Material.SmoothPlastic,
-	}, furniture)
-
-	-- Two chair pairs, off-center so the middle walkway stays clear.
-	-- Chairs face +Z (toward the unit) and sit inside the bid radius.
-	local chairXs = { -7, -4, 4, 7 }
-	for i, xOff in ipairs(chairXs) do
-		MapBuilder.BuildChair(furniture, Vector3.new(bidCenter.X + xOff, groundTop, bidCenter.Z - 8), "Chair_" .. i)
-	end
-
-	furniture.Parent = workspace
-end
-
-function MapBuilder.BuildChair(parent, groundPos, name)
-	local x, gy, z = groundPos.X, groundPos.Y, groundPos.Z
-	-- Center post.
-	makePart({
-		Name = name .. "_Post",
-		Size = Vector3.new(1, 1.5, 1),
-		Position = Vector3.new(x, gy + 0.75, z),
-		Color = Color3.fromRGB(60, 60, 68),
-		Material = Enum.Material.Metal,
-	}, parent)
-	-- Seat (real Seat instance so players can sit).
-	local seat = Instance.new("Seat")
-	seat.Name = name
-	seat.Anchored = true
-	seat.Size = Vector3.new(2.5, 0.6, 2.5)
-	seat.Position = Vector3.new(x, gy + 1.8, z)
-	seat.Color = Color3.fromRGB(70, 80, 100)
-	seat.Material = Enum.Material.SmoothPlastic
-	seat.Parent = parent
-	-- Backrest on the -Z side (chair faces +Z, toward the unit).
-	makePart({
-		Name = name .. "_Back",
-		Size = Vector3.new(2.5, 2.2, 0.5),
-		Position = Vector3.new(x, gy + 3.1, z - 1.25),
-		Color = Color3.fromRGB(70, 80, 100),
-		Material = Enum.Material.SmoothPlastic,
-	}, parent)
-end
-
--- XZ distance check against the bid area. Used for server-authoritative bid
--- validation; Y is ignored so jumping/seating never matters.
-function MapBuilder.IsWithinBidRadius(handles, player, radius)
-	if not handles or not handles.BidCenter or not player then
-		return false
-	end
-	local char = player.Character
-	local root = char and char:FindFirstChild("HumanoidRootPart")
-	if not root then
-		return false
-	end
-	local dx = root.Position.X - handles.BidCenter.X
-	local dz = root.Position.Z - handles.BidCenter.Z
-	return (dx * dx + dz * dz) <= radius * radius
 end
 
 -- M1 door behavior: appear/disappear only.
@@ -409,8 +264,24 @@ function MapBuilder.SetPromptsEnabled(handles, enabled)
 	end
 end
 
--- True when the player's character root is physically inside the unit volume
--- (with a small vertical tolerance). False for missing characters — safe.
+-- XZ distance check against the physical BidCenter part. Y is ignored so
+-- jumping/seating never matters.
+function MapBuilder.IsWithinBidRadius(handles, player, radius)
+	if not handles or not handles.BidCenter or not player then
+		return false
+	end
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	local dx = root.Position.X - handles.BidCenter.X
+	local dz = root.Position.Z - handles.BidCenter.Z
+	return (dx * dx + dz * dz) <= radius * radius
+end
+
+-- Inside test against the UnitBounds marker (or unit extents fallback),
+-- derived from live part positions — move the unit in Studio and this follows.
 function MapBuilder.IsPlayerInsideUnit(handles, player)
 	if not handles or not player then
 		return false
@@ -425,14 +296,15 @@ function MapBuilder.IsPlayerInsideUnit(handles, player)
 	end
 	local pos = root.Position
 	local center = handles.UnitCenter
-	return math.abs(pos.X - center.X) <= UNIT_W / 2
-		and math.abs(pos.Z - center.Z) <= UNIT_D / 2
+	local half = handles.BoundHalf
+	return math.abs(pos.X - center.X) <= half.X
+		and math.abs(pos.Z - center.Z) <= half.Z
 		and pos.Y >= handles.FloorTop - 3
-		and pos.Y <= handles.RoofTop + 3
+		and pos.Y <= handles.FloorTop + half.Y * 2 + 3
 end
 
--- Safety fallback only: moves the player outside if (and only if) they are
--- still inside when the unit must close. Never touches players outside.
+-- Safety fallback only: moves the player to the physical ReturnPoint part
+-- if (and only if) they are still inside when the unit must close.
 -- Returns true when a move happened.
 function MapBuilder.MovePlayerOutsideIfInside(handles, player)
 	if not MapBuilder.IsPlayerInsideUnit(handles, player) then

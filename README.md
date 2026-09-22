@@ -5,11 +5,59 @@ open boxes → reveal randomized items → sell/keep → next auction.
 
 ## Project layout
 - `default.project.json` — Rojo project (Shared/Server/Client sync).
+  Workspace is intentionally NOT mapped: the map is Studio-owned.
 - `src/shared/` — GameConfig, RarityConfig, ItemDefinitions, ItemUtils.
-- `src/server/` — AuctionService, Economy, Inventory, NPCs, MapBuilder,
-  PlayerData, init.server (bootstrap).
+- `src/server/` — AuctionService, Economy, Inventory, NPCs, MapBuilder
+  (behavior over Studio geometry — creates no parts), PlayerData,
+  init.server (bootstrap).
 - `src/client/` — UIController, AuctionClient, init.client.
+- `tools/BuildMapOnce.luau` — one-time command-bar migration that generates
+  the initial `Workspace/StorageAuctionMap` (not synced, never runs at runtime).
 - `AGENTS.md` — architecture + agent instructions.
+
+## Manual Map Editing
+
+Who owns what:
+
+- **Studio owns** `Workspace/StorageAuctionMap` (walls, roof, floor, door,
+  barrier, sign, boxes, mat, chairs, BidCenter, ReturnPoint, spawn) inside
+  `StorageAuction-place.rbxl`. Edit it freely: move, resize, recolor,
+  restyle. Gameplay adapts (bid center, return point, unit bounds, and box
+  positions are all read live from the parts).
+- **Rojo owns** `ReplicatedStorage/Shared`, `ServerScriptService/Server`,
+  `StarterPlayerScripts/Client` (code only). It never touches Workspace.
+- **Git tracks** code, docs, and `tools/` — NOT the `.rbxl` (gitignored).
+  The place file is your local world file; back it up by copying
+  `StorageAuction-place.rbxl` (e.g. `StorageAuction-place-backup-YYYYMMDD.rbxl`)
+  in the same folder before big map edits.
+
+First-time migration (once ever):
+
+1. `rojo serve` NOT required; keep the Rojo plugin disconnected.
+2. Open `StorageAuction-place.rbxl` in Studio (do NOT press Play).
+3. View → Command Bar. Paste the entire contents of
+   `tools/BuildMapOnce.luau`, press Enter.
+4. Output shows `[SA] Map migration complete`. If your Baseplate top is not
+   at Y = 0, move `StorageAuctionMap` vertically to fit, then continue.
+5. Save the place (Ctrl+S). Done — the map is persistent.
+
+Everyday workflow:
+
+1. Start `rojo serve` in `D:\Roblox\Projects\StorageAuction`.
+2. Open `StorageAuction-place.rbxl`, connect Rojo, verify code syncs.
+3. Select anything under `Workspace/StorageAuctionMap` and edit it.
+4. Press Play to test — scripts reference the live parts.
+5. Save the place in Studio to keep map edits (Ctrl+S).
+6. Code edits happen in `src/` files; commit/push those via Git.
+7. Never put the map under Rojo management — `default.project.json` must
+   keep no Workspace entry, or manual edits will be overwritten.
+
+Required vs optional map pieces (missing required = clear red error in
+Output at Play, never a silent rebuild): required are `StorageUnit` with
+`Door`, `Barrier`, `Floor`, `ReturnPoint`, ≥1 `Container_*`, plus
+`AuctionArea/BidCenter`. Optional (ignored if absent): `Sign`, `Mat`,
+`Seats`, `UnitBounds` (falls back to unit extents), `SpawnLocation`
+(warned if nowhere).
 
 ## Prerequisites
 1. Roblox Studio installed (its system files under %LOCALAPPDATA% are fine).

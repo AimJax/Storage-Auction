@@ -52,7 +52,9 @@ InventoryService.Init(remotes)
 PlayerDataService.Init(EconomyService, InventoryService)
 
 -- 3) Map.
-local mapHandles = MapBuilder.Build(GameConfig.ContainersPerUnit)
+-- 3) Map: Studio-authored. Errors clearly if StorageAuctionMap is missing
+-- (run tools/BuildMapOnce.luau once in Studio, then Save the place).
+local mapHandles = MapBuilder.GetHandles()
 
 -- 4) Auction state machine.
 AuctionService.Init({
