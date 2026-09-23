@@ -25,40 +25,74 @@ local folder = nil
 
 local FOLDER_NAME = "SA_PlayerWarehouses"
 
--- Template visuals, recorded before hiding so clones restore them 1:1.
+-- Template visuals, recorded before hiding so clones restore them.
+-- Keyed by stable relative instance path ("DisplaySlots/Slot_1#1"), so
+-- future template hierarchy edits can only SKIP non-matching descendants,
+-- never apply values to the wrong one. Class is re-checked on apply.
 local templateVisuals = {}
+
+-- Path of desc relative to root, with same-named siblings disambiguated
+-- by occurrence index (Roblox allows duplicate sibling names).
+local function relativePath(root, desc)
+	local segments = {}
+	local current = desc
+	while current and current ~= root do
+		local parent = current.Parent
+		local occurrence = 1
+		if parent then
+			local count = 0
+			for _, sibling in ipairs(parent:GetChildren()) do
+				if sibling.Name == current.Name then
+					count += 1
+					if sibling == current then
+						occurrence = count
+					end
+				end
+			end
+			if count < 2 then
+				occurrence = 0 -- unique name: no suffix needed
+			end
+		end
+		if occurrence > 0 then
+			table.insert(segments, 1, current.Name .. "#" .. occurrence)
+		else
+			table.insert(segments, 1, current.Name)
+		end
+		current = parent
+	end
+	return table.concat(segments, "/")
+end
 
 local function recordVisuals(template)
 	templateVisuals = {}
 	for _, desc in ipairs(template:GetDescendants()) do
+		local key = relativePath(template, desc)
 		if desc:IsA("BasePart") then
-			table.insert(templateVisuals, {
+			templateVisuals[key] = {
+				class = "Part",
 				transparency = desc.Transparency,
 				collide = desc.CanCollide,
 				touch = desc.CanTouch,
 				query = desc.CanQuery,
-			})
+			}
 		elseif desc:IsA("SurfaceGui") or desc:IsA("BillboardGui") then
-			table.insert(templateVisuals, { guiEnabled = desc.Enabled })
-		else
-			table.insert(templateVisuals, {})
+			templateVisuals[key] = { class = "Gui", guiEnabled = desc.Enabled }
 		end
 	end
 end
 
 local function restoreVisuals(clone)
-	local cloneDescs = clone:GetDescendants()
-	for i, recorded in ipairs(templateVisuals) do
-		local desc = cloneDescs[i]
-		if not desc then
-			break
+	for _, desc in ipairs(clone:GetDescendants()) do
+		local recorded = templateVisuals[relativePath(clone, desc)]
+		if not recorded then
+			continue -- new/renamed part: leave authored clone values alone
 		end
-		if desc:IsA("BasePart") and recorded.transparency ~= nil then
+		if desc:IsA("BasePart") and recorded.class == "Part" then
 			desc.Transparency = recorded.transparency
 			desc.CanCollide = recorded.collide
 			desc.CanTouch = recorded.touch
 			desc.CanQuery = recorded.query
-		elseif (desc:IsA("SurfaceGui") or desc:IsA("BillboardGui")) and recorded.guiEnabled ~= nil then
+		elseif (desc:IsA("SurfaceGui") or desc:IsA("BillboardGui")) and recorded.class == "Gui" then
 			desc.Enabled = recorded.guiEnabled
 		end
 	end
