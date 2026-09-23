@@ -162,8 +162,13 @@ function MapBuilder.GetHandles()
 	end
 	-- Showroom (optional): discover Slot_N parts, contiguous from Slot_1.
 	-- Missing showroom only disables displays; the auction loop is unaffected.
+	-- The PlayerShowroom MODEL itself is also exposed so DisplayService can
+	-- clone per-player runtime showrooms from it (template stays pristine).
 	local showroomSlots = nil
 	local showroom = map:FindFirstChild("PlayerShowroom")
+	if showroom and not showroom:IsA("Model") then
+		showroom = nil
+	end
 	if showroom then
 		local slotsFolder = showroom:FindFirstChild("DisplaySlots")
 		if slotsFolder then
@@ -231,6 +236,7 @@ function MapBuilder.GetHandles()
 		BidCenter = bidCenter.Position,
 		ReturnCFrame = returnPoint.CFrame,
 		ShowroomSlots = showroomSlots, -- ordered Slot_1..N parts, or nil
+		ShowroomTemplate = showroom, -- PlayerShowroom Model, or nil
 	}
 end
 

@@ -58,8 +58,10 @@ place file, is hand-editable, and Rojo never touches Workspace (see
   validates `Workspace/StorageAuctionMap`, drives door/barrier/prompts/bounds.
   Never creates parts. Missing required pieces error clearly in Output.
 - `PlayerDataService.luau` — DataStore (pcall-guarded; session-only fallback).
-- `DisplayService.luau` — showroom slot assignments (server-validated) + rarity
-  proxy parts under runtime `Workspace/SA_Displays` (never inside the map).
+- `DisplayService.luau` — per-player showroom displays (server-validated):
+  clones the authored template into runtime `Workspace/SA_PlayerShowrooms/
+  Player_<UserId>` (plot 0 = template spot, +24 X per plot) with rarity
+  proxies on the clone's slots. Never inside the Argon-managed map.
 - `PlayerStatsService.luau` — session stats: AuctionsWon, CollectionValue
   (computed from inventory), premium-unlock teaser.
 
