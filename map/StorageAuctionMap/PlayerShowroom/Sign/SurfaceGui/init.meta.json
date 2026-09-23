@@ -1,0 +1,7 @@
+{
+  "className": "SurfaceGui",
+  "properties": {
+    "CanvasSize": [600, 150],
+    "Face": "Left"
+  }
+}

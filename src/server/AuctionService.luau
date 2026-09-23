@@ -20,6 +20,8 @@ local NPCBidderService = nil
 local MapBuilder = nil
 local MapHandles = nil
 local Remotes = nil
+local PlayerStatsService = nil
+local DisplayService = nil
 
 -- Auction state (single active unit for M1)
 local State = "Waiting"
@@ -199,6 +201,7 @@ function AuctionService.TryKeepItem(player, instanceId)
 	end
 	PendingByUser[player.UserId] = nil
 	InventoryService.AddItem(player, pending)
+	PlayerStatsService.Push(player)
 	return true, pending
 end
 
@@ -210,6 +213,7 @@ function AuctionService.TrySellItem(player, instanceId)
 	if pending and (instanceId == nil or instanceId == pending.InstanceId) then
 		PendingByUser[player.UserId] = nil
 		EconomyService.AddCash(player, pending.FinalValue)
+		PlayerStatsService.Push(player)
 		return true, pending.FinalValue
 	end
 	local removed = InventoryService.RemoveItem(player, instanceId)
@@ -217,6 +221,8 @@ function AuctionService.TrySellItem(player, instanceId)
 		return false, "Item not found in your inventory."
 	end
 	EconomyService.AddCash(player, removed.FinalValue)
+	DisplayService.OnItemRemoved(player, instanceId)
+	PlayerStatsService.Push(player)
 	return true, removed.FinalValue
 end
 
@@ -243,6 +249,7 @@ local function forceKeepPending(userId)
 	local player = Players:GetPlayerByUserId(userId)
 	if player then
 		InventoryService.AddItem(player, pending)
+		PlayerStatsService.Push(player)
 		local notify = Remotes and Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
 		if notify then
 			notify:FireClient(player, { text = "Time expired - kept " .. pending.Name, closeReveal = true })
@@ -294,6 +301,7 @@ local function finishBidding()
 			if ok then
 				WinnerName = player.Name
 				WinnerUserId = player.UserId
+				PlayerStatsService.RecordWin(player)
 			else
 				WinnerName = ""
 				WinnerUserId = nil
@@ -423,6 +431,8 @@ function AuctionService.Init(deps)
 	MapBuilder = deps.MapBuilder
 	MapHandles = deps.MapHandles
 	Remotes = deps.Remotes
+	PlayerStatsService = deps.PlayerStatsService
+	DisplayService = deps.DisplayService
 
 	-- Wire RemoteFunctions.
 	local placeBid = Remotes:FindFirstChild(GameConfig.RemoteNames.PlaceBid)

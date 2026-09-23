@@ -19,6 +19,7 @@ local lastSeenBid = -1
 -- Local auction-radius flag (UX only; the server validates every bid).
 -- Auction toasts/hints follow it; Sell/Keep feedback always shows.
 local inRadius = true
+local displayState = { slots = {} }
 
 local function getRemote(name, className)
 	local r = remotes:FindFirstChild(name)
@@ -87,12 +88,42 @@ function AuctionClient.Start()
 	end)
 	getRemote(GameConfig.RemoteNames.InventoryChanged, "RemoteEvent").OnClientEvent:Connect(function(items)
 		if typeof(items) == "table" then
-			UIController.UpdateInventory(items)
+			UIController.UpdateInventory(items, function(item)
+				UIController.SetSelectedItem(item)
+			end)
+			-- Drop the detail popup if its item left the Bag (sold/removed).
+			local selectedId = UIController.GetSelectedItemId()
+			if selectedId then
+				local stillOwned = false
+				for _, it in ipairs(items) do
+					if it.InstanceId == selectedId then
+						stillOwned = true
+						break
+					end
+				end
+				if not stillOwned then
+					UIController.HideItemPanel()
+					UIController.HideSlotPicker()
+				end
+			end
 		end
 	end)
 	getRemote(GameConfig.RemoteNames.ItemRevealed, "RemoteEvent").OnClientEvent:Connect(function(item)
 		if typeof(item) == "table" then
 			UIController.ShowReveal(item)
+		end
+	end)
+	getRemote(GameConfig.RemoteNames.DisplayChanged, "RemoteEvent").OnClientEvent:Connect(function(state)
+		if typeof(state) == "table" then
+			displayState = state
+			if UIController.IsSlotPickerVisible() then
+				UIController.RefreshSlotPicker(displayState)
+			end
+		end
+	end)
+	getRemote(GameConfig.RemoteNames.StatsChanged, "RemoteEvent").OnClientEvent:Connect(function(stats)
+		if typeof(stats) == "table" then
+			UIController.UpdateStats(stats)
 		end
 	end)
 	getRemote(GameConfig.RemoteNames.Notify, "RemoteEvent").OnClientEvent:Connect(function(payload)
@@ -172,6 +203,77 @@ function AuctionClient.Start()
 		end
 	end)
 
+	-- Bag item detail: DISPLAY opens the slot picker, SELL sells from Bag.
+	refs.ItemDisplayBtn.MouseButton1Click:Connect(function()
+		local instanceId = UIController.GetSelectedItemId()
+		if not instanceId then
+			return
+		end
+		UIController.ShowSlotPicker(displayState)
+	end)
+	refs.ItemSellBtn.MouseButton1Click:Connect(function()
+		local instanceId = UIController.GetSelectedItemId()
+		if not instanceId then
+			return
+		end
+		local fn = getRemote(GameConfig.RemoteNames.SellItem, "RemoteFunction")
+		local ok, res = pcall(function()
+			return fn:InvokeServer(instanceId)
+		end)
+		if ok and typeof(res) == "table" and res.ok then
+			UIController.HideItemPanel()
+			UIController.HideSlotPicker()
+			UIController.ShowToast("Sold for $" .. formatMoney(res.result) .. "!")
+		else
+			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Sell failed"
+			UIController.ShowToast(msg)
+		end
+	end)
+	refs.ItemCloseBtn.MouseButton1Click:Connect(function()
+		UIController.HideItemPanel()
+	end)
+
+	-- Slot picker: assign selected Bag item, or remove its display.
+	for i, btn in ipairs(refs.SlotButtons) do
+		local slotIndex = i
+		btn.MouseButton1Click:Connect(function()
+			local instanceId = UIController.GetSelectedItemId()
+			if not instanceId then
+				return
+			end
+			local fn = getRemote(GameConfig.RemoteNames.DisplayItem, "RemoteFunction")
+			local ok, res = pcall(function()
+				return fn:InvokeServer(instanceId, slotIndex)
+			end)
+			if ok and typeof(res) == "table" and res.ok then
+				UIController.HideSlotPicker()
+				UIController.HideItemPanel()
+				UIController.ShowToast("Displayed " .. tostring(res.result.Name) .. " in Slot " .. slotIndex)
+			else
+				local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Display failed"
+				UIController.ShowToast(msg)
+			end
+		end)
+	end
+	refs.SlotRemoveBtn.MouseButton1Click:Connect(function()
+		local instanceId = UIController.GetSelectedItemId()
+		if not instanceId then
+			return
+		end
+		local fn = getRemote(GameConfig.RemoteNames.RemoveDisplay, "RemoteFunction")
+		local ok, res = pcall(function()
+			return fn:InvokeServer(instanceId)
+		end)
+		if ok and typeof(res) == "table" and res.ok then
+			UIController.ShowToast("Display removed")
+		else
+			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Remove failed"
+			UIController.ShowToast(msg)
+		end
+	end)
+	refs.SlotCloseBtn.MouseButton1Click:Connect(function()
+		UIController.HideSlotPicker()
+	end)
 	-- Local proximity check for the auction HUD (UX only; server validates).
 	-- Runs on a slow tick so entering/leaving the radius updates immediately
 	-- without spamming anything.

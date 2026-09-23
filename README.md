@@ -157,8 +157,8 @@ Output at Play, never a silent rebuild): required are `StorageUnit` with
 1. In Studio: **Play** (F5). You spawn at (0,3,0), unit is at (0,0,40).
 2. Top bar shows state + countdown + bid + Cash (starts at $1000).
 3. WAIT (8s) → INSPECTION (15s, door disappears, boxes visible, barrier blocks entry).
-4. BIDDING (30s): stand near the unit (dark mat / chairs area, 35 studs)
-   and press **BID $X**. Walk far away and the BID button hides — the server
+4. BIDDING (30s): stand near the unit (dark mat / chairs area, 24 studs)
+   and press **BID $X**. Walk far away and the auction HUD hides — the server
    rejects distant bids with "Move closer to the auction to bid". NPCs
    (Dealer Dan, Collector Kate) will counter-bid. Outbid them.
    Chairs: 4 seats in two pairs face the unit; sitting still counts as near.
@@ -185,6 +185,19 @@ Output at Play, never a silent rebuild): required are `StorageUnit` with
 
 Multi-client: Studio **Test** tab → **Clients and Servers** → 2 Players →
 **Start**. Bid from one window, watch the other update.
+
+## Showroom / collection test (solo)
+9. KEEP an item → Bag count rises; Bag panel shows
+   `Collection $X · Won N` and premium LOCKED status.
+10. Open Bag → click the item → DISPLAY → pick Slot 1. A rarity-colored
+    proxy with name/rarity/value appears on the showroom slot (showroom is
+    east of the unit at x≈38, outside the bid radius — walk there).
+11. DISPLAY the same item into Slot 2 → Slot 1 clears, Slot 2 shows it.
+    One item never occupies two slots.
+12. Slot picker → REMOVE DISPLAY → proxy disappears, item stays in Bag.
+13. DISPLAY again, then SELL it from the Bag → proxy auto-clears, Cash rises.
+14. Win auctions / grow collection → Bag stats update; at 5 wins or $5,000
+    collection the premium line switches to UNLOCKED (teaser only).
 
 ## Known limitations (M1)
 - Rummaging is physically open: anyone may walk in, but only the winner can

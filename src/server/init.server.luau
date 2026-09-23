@@ -14,6 +14,8 @@ local NPCBidderService = require(script.NPCBidderService)
 local AuctionService = require(script.AuctionService)
 local MapBuilder = require(script.MapBuilder)
 local PlayerDataService = require(script.PlayerDataService)
+local DisplayService = require(script.DisplayService)
+local PlayerStatsService = require(script.PlayerStatsService)
 
 -- 1) Remotes (created at runtime so Studio needs zero manual setup).
 local function ensureRemotes()
@@ -29,10 +31,14 @@ local function ensureRemotes()
 		{ GameConfig.RemoteNames.ItemRevealed, "RemoteEvent" },
 		{ GameConfig.RemoteNames.InventoryChanged, "RemoteEvent" },
 		{ GameConfig.RemoteNames.Notify, "RemoteEvent" },
+		{ GameConfig.RemoteNames.DisplayChanged, "RemoteEvent" },
+		{ GameConfig.RemoteNames.StatsChanged, "RemoteEvent" },
 		{ GameConfig.RemoteNames.PlaceBid, "RemoteFunction" },
 		{ GameConfig.RemoteNames.OpenContainer, "RemoteFunction" },
 		{ GameConfig.RemoteNames.KeepItem, "RemoteFunction" },
 		{ GameConfig.RemoteNames.SellItem, "RemoteFunction" },
+		{ GameConfig.RemoteNames.DisplayItem, "RemoteFunction" },
+		{ GameConfig.RemoteNames.RemoveDisplay, "RemoteFunction" },
 	}
 	for _, d in ipairs(defs) do
 		if not folder:FindFirstChild(d[1]) then
@@ -64,6 +70,19 @@ AuctionService.Init({
 	MapBuilder = MapBuilder,
 	MapHandles = mapHandles,
 	Remotes = remotes,
+	PlayerStatsService = PlayerStatsService,
+	DisplayService = DisplayService,
+})
+
+-- 5) Showroom displays + progression stats (depend on services above).
+DisplayService.Init({
+	InventoryService = InventoryService,
+	MapHandles = mapHandles,
+	Remotes = remotes,
+})
+PlayerStatsService.Init({
+	InventoryService = InventoryService,
+	Remotes = remotes,
 })
 
 -- 5) Players.
@@ -84,6 +103,11 @@ local function onPlayerAdded(player)
 			if invEv then
 				invEv:FireClient(player, InventoryService.GetItems(player))
 			end
+			local dispEv = remotes:FindFirstChild(GameConfig.RemoteNames.DisplayChanged)
+			if dispEv then
+				dispEv:FireClient(player, DisplayService.GetDisplayState(player))
+			end
+			PlayerStatsService.Push(player)
 		end
 	end)
 end
@@ -91,6 +115,8 @@ end
 local function onPlayerRemoving(player)
 	PlayerDataService.Save(player)
 	AuctionService.ClearPlayer(player)
+	DisplayService.ClearPlayer(player)
+	PlayerStatsService.ClearPlayer(player)
 	InventoryService.ClearPlayer(player)
 	EconomyService.ClearPlayer(player)
 end

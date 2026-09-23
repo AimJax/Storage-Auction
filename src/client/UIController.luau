@@ -173,9 +173,29 @@ function UIController.Build()
 		Font = Enum.Font.GothamBold,
 		TextSize = 14,
 	}, inv)
+	refs.StatsLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -12, 0, 18),
+		Position = UDim2.new(0, 6, 0, 28),
+		BackgroundTransparency = 1,
+		Text = "Collection $0 · Won 0",
+		TextColor3 = Color3.fromRGB(255, 225, 130),
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, inv)
+	refs.PremiumLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -12, 0, 16),
+		Position = UDim2.new(0, 6, 0, 46),
+		BackgroundTransparency = 1,
+		Text = "PREMIUM: LOCKED",
+		TextColor3 = Color3.fromRGB(150, 150, 160),
+		Font = Enum.Font.Gotham,
+		TextSize = 10,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, inv)
 	refs.InventoryList = mk("ScrollingFrame", {
-		Size = UDim2.new(1, -12, 1, -36),
-		Position = UDim2.new(0, 6, 0, 32),
+		Size = UDim2.new(1, -12, 1, -68),
+		Position = UDim2.new(0, 6, 0, 64),
 		BackgroundTransparency = 1,
 		ScrollBarThickness = 4,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
@@ -186,6 +206,95 @@ function UIController.Build()
 	refs.BagButton.MouseButton1Click:Connect(function()
 		refs.InventoryFrame.Visible = not refs.InventoryFrame.Visible
 	end)
+
+	-- Item detail popup (from Bag row click): DISPLAY / SELL / CLOSE.
+	local itemPanel = mk("Frame", {
+		Name = "ItemPanel",
+		Size = UDim2.new(0, 230, 0, 220),
+		Position = UDim2.new(0.5, -115, 0.5, -110),
+		BackgroundColor3 = Color3.fromRGB(26, 26, 34),
+		BackgroundTransparency = 0.05,
+		Visible = false,
+	}, gui)
+	mk("UICorner", { CornerRadius = UDim.new(0, 10) }, itemPanel)
+	mk("UIStroke", { Color = Color3.fromRGB(90, 90, 110), Thickness = 1 }, itemPanel)
+	refs.ItemName = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 26), Position = UDim2.new(0, 8, 0, 6),
+		BackgroundTransparency = 1, Text = "", Font = Enum.Font.GothamBold,
+		TextSize = 15, TextTruncate = Enum.TextTruncate.AtEnd,
+	}, itemPanel)
+	refs.ItemRarity = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 20), Position = UDim2.new(0, 8, 0, 32),
+		BackgroundTransparency = 1, Text = "", Font = Enum.Font.GothamBold, TextSize = 13,
+	}, itemPanel)
+	refs.ItemDetail = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 0, 54),
+		BackgroundTransparency = 1, Text = "", TextColor3 = Color3.fromRGB(225, 225, 230),
+		Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true,
+	}, itemPanel)
+	refs.ItemDisplayBtn = mk("TextButton", {
+		Size = UDim2.new(0, 102, 0, 36), Position = UDim2.new(0, 10, 0, 100),
+		BackgroundColor3 = Color3.fromRGB(70, 110, 180), Text = "DISPLAY",
+		TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 14,
+	}, itemPanel)
+	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.ItemDisplayBtn)
+	refs.ItemSellBtn = mk("TextButton", {
+		Size = UDim2.new(0, 102, 0, 36), Position = UDim2.new(1, -112, 0, 100),
+		BackgroundColor3 = Color3.fromRGB(190, 140, 30), Text = "SELL",
+		TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 14,
+	}, itemPanel)
+	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.ItemSellBtn)
+	refs.ItemCloseBtn = mk("TextButton", {
+		Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0, 10, 1, -40),
+		BackgroundColor3 = Color3.fromRGB(60, 60, 70), Text = "CLOSE",
+		TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.Gotham, TextSize = 13,
+	}, itemPanel)
+	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.ItemCloseBtn)
+	refs.ItemPanel = itemPanel
+
+	-- Slot picker popup: 6 slot buttons + REMOVE DISPLAY + CLOSE.
+	local slotPanel = mk("Frame", {
+		Name = "SlotPanel",
+		Size = UDim2.new(0, 230, 0, 300),
+		Position = UDim2.new(0.5, -115, 0.5, -150),
+		BackgroundColor3 = Color3.fromRGB(26, 26, 34),
+		BackgroundTransparency = 0.05,
+		Visible = false,
+	}, gui)
+	mk("UICorner", { CornerRadius = UDim.new(0, 10) }, slotPanel)
+	mk("UIStroke", { Color = Color3.fromRGB(90, 90, 110), Thickness = 1 }, slotPanel)
+	mk("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1,
+		Text = "DISPLAY IN SLOT", TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold, TextSize = 13,
+	}, slotPanel)
+	refs.SlotButtons = {}
+	for i = 1, 6 do
+		local btn = mk("TextButton", {
+			Size = UDim2.new(1, -16, 0, 28),
+			Position = UDim2.new(0, 8, 0, 26 + (i - 1) * 32),
+			BackgroundColor3 = Color3.fromRGB(40, 40, 52),
+			Text = i .. ": (empty)",
+			TextColor3 = Color3.new(1, 1, 1),
+			Font = Enum.Font.Gotham, TextSize = 12,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, slotPanel)
+		mk("UICorner", { CornerRadius = UDim.new(0, 6) }, btn)
+		refs.SlotButtons[i] = btn
+	end
+	refs.SlotRemoveBtn = mk("TextButton", {
+		Size = UDim2.new(1, -16, 0, 28), Position = UDim2.new(0, 8, 0, 222),
+		BackgroundColor3 = Color3.fromRGB(140, 60, 60), Text = "REMOVE DISPLAY",
+		TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 12,
+	}, slotPanel)
+	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, refs.SlotRemoveBtn)
+	refs.SlotCloseBtn = mk("TextButton", {
+		Size = UDim2.new(1, -16, 0, 26), Position = UDim2.new(0, 8, 0, 254),
+		BackgroundColor3 = Color3.fromRGB(60, 60, 70), Text = "CLOSE",
+		TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.Gotham, TextSize = 12,
+	}, slotPanel)
+	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, refs.SlotCloseBtn)
+	refs.SlotPanel = slotPanel
 
 	-- Reveal panel: compact, centered. Auto-closes on Sell/Keep (see client).
 	local reveal = mk("Frame", {
@@ -411,7 +520,7 @@ function UIController.GetRevealInstanceId()
 	return nil
 end
 
-function UIController.UpdateInventory(items)
+function UIController.UpdateInventory(items, onSelect)
 	if refs.BagButton then
 		refs.BagButton.Text = "Bag (" .. tostring(#items) .. ")"
 	end
@@ -419,21 +528,117 @@ function UIController.UpdateInventory(items)
 		return
 	end
 	for _, child in ipairs(refs.InventoryList:GetChildren()) do
-		if child:IsA("TextLabel") then
+		if child:IsA("TextLabel") or child:IsA("TextButton") then
 			child:Destroy()
 		end
 	end
 	for _, item in ipairs(items) do
-		local label = Instance.new("TextLabel")
+		local label = Instance.new("TextButton")
 		label.Size = UDim2.new(1, -4, 0, 40)
 		label.BackgroundColor3 = Color3.fromRGB(36, 36, 48)
 		label.TextColor3 = rarityColor(item.Rarity)
 		label.Font = Enum.Font.Gotham
 		label.TextSize = 12
 		label.TextWrapped = true
+		label.AutoButtonColor = true
 		label.Text = string.format("%s [%s] %d%% $%s", item.Name, tostring(item.Rarity), tonumber(item.Condition) or 0, formatMoney(tonumber(item.FinalValue) or 0))
 		label.Parent = refs.InventoryList
 		mk("UICorner", { CornerRadius = UDim.new(0, 4) }, label)
+		if onSelect then
+			local copy = item
+			label.MouseButton1Click:Connect(function()
+				onSelect(copy)
+			end)
+		end
+	end
+end
+
+function UIController.UpdateStats(stats)
+	if not stats then
+		return
+	end
+	if refs.StatsLabel then
+		refs.StatsLabel.Text = string.format("Collection $%s · Won %d",
+			formatMoney(tonumber(stats.collectionValue) or 0), tonumber(stats.auctionsWon) or 0)
+	end
+	if refs.PremiumLabel then
+		if stats.premiumUnlocked then
+			refs.PremiumLabel.Text = "PREMIUM AUCTIONS: UNLOCKED"
+			refs.PremiumLabel.TextColor3 = Color3.fromRGB(120, 230, 130)
+		else
+			refs.PremiumLabel.Text = string.format("PREMIUM: LOCKED (%d wins or $%s)",
+				tonumber(stats.winsRequired) or 5, formatMoney(tonumber(stats.valueRequired) or 5000))
+			refs.PremiumLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
+		end
+	end
+end
+
+local selectedItem = nil
+
+function UIController.SetSelectedItem(item)
+	selectedItem = item
+	if not refs.ItemPanel then
+		return
+	end
+	if not item then
+		refs.ItemPanel.Visible = false
+		return
+	end
+	refs.ItemPanel.Visible = true
+	refs.ItemName.Text = item.Name
+	refs.ItemName.TextColor3 = rarityColor(item.Rarity)
+	refs.ItemRarity.Text = string.upper(tostring(item.Rarity))
+	refs.ItemRarity.TextColor3 = rarityColor(item.Rarity)
+	refs.ItemDetail.Text = string.format("Condition %d%%  ·  Value $%s",
+		tonumber(item.Condition) or 0, formatMoney(tonumber(item.FinalValue) or 0))
+	refs.ItemPanel:SetAttribute("InstanceId", item.InstanceId)
+end
+
+function UIController.GetSelectedItemId()
+	if refs.ItemPanel then
+		return refs.ItemPanel:GetAttribute("InstanceId")
+	end
+	return nil
+end
+
+function UIController.HideItemPanel()
+	selectedItem = nil
+	if refs.ItemPanel then
+		refs.ItemPanel.Visible = false
+		refs.ItemPanel:SetAttribute("InstanceId", nil)
+	end
+end
+
+function UIController.ShowSlotPicker(displayState)
+	if not refs.SlotPanel then
+		return
+	end
+	refs.SlotPanel.Visible = true
+	UIController.RefreshSlotPicker(displayState)
+end
+
+function UIController.HideSlotPicker()
+	if refs.SlotPanel then
+		refs.SlotPanel.Visible = false
+	end
+end
+
+function UIController.IsSlotPickerVisible()
+	return refs.SlotPanel and refs.SlotPanel.Visible or false
+end
+
+function UIController.RefreshSlotPicker(displayState)
+	if not refs.SlotButtons then
+		return
+	end
+	local slots = (displayState and displayState.slots) or {}
+	for i, btn in ipairs(refs.SlotButtons) do
+		local occupant = slots[i]
+		if occupant then
+			btn.Text = i .. ": " .. tostring(occupant.name)
+		else
+			btn.Text = i .. ": (empty)"
+		end
 	end
 end
 

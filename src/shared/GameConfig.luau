@@ -30,9 +30,14 @@ local GameConfig = {
 	RummageDuration = 90,
 	CleanupDuration = 5,
 
-	-- Unit contents: the Studio map owns the real container set
--- (StorageAuctionMap.StorageUnit.Container_*). This documents the M1 intent.
-	ContainersPerUnit = 3,
+	-- Showroom (MVP): fixed personal-collection slots, one shared area.
+	-- Display assignments are tracked per player so per-player showrooms
+	-- can replace the shared area later without changing the record shape.
+	DisplaySlotCount = 6,
+
+	-- First progression gate (teaser only — no premium gameplay yet).
+	PremiumAuctionsWinsRequired = 5,
+	PremiumAuctionsValueRequired = 5000,
 
 	-- Value formula: FinalValue = floor(BaseValue * RarityMult * ConditionMult)
 	-- ConditionMult = ConditionFloor + (1 - ConditionFloor) * (Condition / 100)
@@ -54,10 +59,14 @@ local GameConfig = {
 		ItemRevealed = "ItemRevealed",
 		InventoryChanged = "InventoryChanged",
 		Notify = "Notify",
+		DisplayChanged = "DisplayChanged",
+		StatsChanged = "StatsChanged",
 		PlaceBid = "PlaceBid",
 		OpenContainer = "OpenContainer",
 		KeepItem = "KeepItem",
 		SellItem = "SellItem",
+		DisplayItem = "DisplayItem",
+		RemoveDisplay = "RemoveDisplay",
 	},
 }
 

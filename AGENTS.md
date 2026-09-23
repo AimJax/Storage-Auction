@@ -58,6 +58,10 @@ place file, is hand-editable, and Rojo never touches Workspace (see
   validates `Workspace/StorageAuctionMap`, drives door/barrier/prompts/bounds.
   Never creates parts. Missing required pieces error clearly in Output.
 - `PlayerDataService.luau` — DataStore (pcall-guarded; session-only fallback).
+- `DisplayService.luau` — showroom slot assignments (server-validated) + rarity
+  proxy parts under runtime `Workspace/SA_Displays` (never inside the map).
+- `PlayerStatsService.luau` — session stats: AuctionsWon, CollectionValue
+  (computed from inventory), premium-unlock teaser.
 
 ### Client modules (`src/client/`)
 - `init.client.luau` → `AuctionClient` → `UIController`.
