@@ -69,10 +69,16 @@ local function broadcast()
 		local inspection = nil
 		if State == "Inspection" and CurrentUnit then
 			local clues = {}
-			for _, v in ipairs(CurrentUnit.VisibleItems) do
-				table.insert(clues, { name = v.Name, condition = v.ConditionName, rarity = v.Rarity })
+			for _, item in ipairs(CurrentUnit.VisibleItems) do
+				-- Safe fields only: never values, never hidden identities.
+				table.insert(clues, { name = item.Name, condition = item.ConditionName, rarity = item.Rarity })
 			end
-			inspection = { boxCount = #CurrentUnit.Containers, clues = clues }
+			inspection = {
+				visibleCount = #CurrentUnit.VisibleItems,
+				hiddenCount = #CurrentUnit.HiddenItems,
+				totalItemCount = #CurrentUnit.AllItems,
+				clues = clues,
+			}
 		end
 		ev:FireAllClients({
 			state = State,

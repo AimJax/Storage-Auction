@@ -114,9 +114,9 @@ function UIController.Build()
 	}, gui)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, refs.ToastLabel)
 
-	-- Inspection clues: visible contents + sealed box count. Shown ONLY
-	-- during Inspection. Names/conditions only — never values or rarity of
-	-- hidden loot (hidden rarity IS shown for visible items: they're visible).
+	-- Inspection clues: real visible items + visible/hidden counts. Shown ONLY
+	-- during Inspection AND inside the auction radius. Names/conditions only
+	-- — never values, never hidden item identities.
 	local insp = mk("Frame", {
 		Name = "Inspection",
 		Size = UDim2.new(0, 250, 0, 150),
@@ -546,11 +546,12 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 		end
 	end
 
-	-- Inspection clues refresh only on state entry or payload change.
-	local inspKey = state
+	-- Inspection clues refresh on state entry, payload change, or radius
+	-- crossing (walk out hides, walk back in restores — same payload).
+	local inspKey = state .. (showAuction and "|in" or "|out")
 	if state == "Inspection" and snapshot.inspection then
 		local insp = snapshot.inspection
-		inspKey ..= "|" .. tostring(insp.boxCount or 0) .. "|" .. tostring(#(insp.clues or {}))
+		inspKey ..= "|" .. tostring(insp.visibleCount or 0) .. "|" .. tostring(insp.hiddenCount or 0)
 		local first = insp.clues and insp.clues[1]
 		if first then
 			inspKey ..= "|" .. tostring(first.name)
@@ -558,8 +559,19 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 	end
 	if inspKey ~= lastInspectionKey then
 		lastInspectionKey = inspKey
-		UIController.UpdateInspection(state == "Inspection" and snapshot.inspection or nil)
+		local payload = nil
+		if state == "Inspection" and showAuction and snapshot.inspection then
+			payload = snapshot.inspection
+		end
+		UIController.UpdateInspection(payload)
 	end
+end
+
+local function plural(n, one, many)
+	if tonumber(n) == 1 then
+		return "1 " .. one
+	end
+	return tostring(tonumber(n) or 0) .. " " .. many
 end
 
 function UIController.UpdateInspection(inspection)
@@ -581,8 +593,9 @@ function UIController.UpdateInspection(inspection)
 			row.Text = ""
 		end
 	end
-	local boxes = tonumber(inspection.boxCount) or 0
-	refs.InspectionFooter.Text = string.format("%d sealed box%s · contents hidden", boxes, if boxes == 1 then "" else "es")
+	refs.InspectionFooter.Text = string.format("%s · %s",
+		plural(inspection.visibleCount, "visible item", "visible items"),
+		plural(inspection.hiddenCount, "hidden item", "hidden items"))
 end
 
 function UIController.ShowReveal(item)

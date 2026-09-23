@@ -30,9 +30,34 @@ local function rollQuality(rng)
 	return "Average"
 end
 
+-- How many of the unit's real items show during Inspection. Weights come
+-- from config; counts above the actual item total are ignored.
+local function rollVisibleCount(rng, total)
+	local weights = GameConfig.VisibleCountWeights or { [0] = 15, [1] = 35, [2] = 35, [3] = 15 }
+	local sum = 0
+	for count = 0, total do
+		sum += weights[count] or 0
+	end
+	if sum <= 0 then
+		return math.min(1, total)
+	end
+	local roll = rng:NextNumber() * sum
+	for count = 0, total do
+		roll -= weights[count] or 0
+		if roll <= 0 then
+			return count
+		end
+	end
+	return total
+end
+
 -- containerIds: array of Studio container ids (sorted by caller for stability).
--- Returns { Seed, Quality, VisibleItems, Containers, TrueTotalValue }.
--- Containers: { { ContainerId, Items = { itemInstance } } }, one item per box
+-- Returns one REAL item set with a visible/hidden split:
+--   { Seed, Quality, AllItems, VisibleItems, HiddenItems, Containers,
+--     TrueTotalValue }
+-- VisibleItems/HiddenItems reference the SAME item tables as Containers and
+-- AllItems (no clones, no rerolls). TrueTotalValue covers visible + hidden.
+-- Containers: { { ContainerId, Items = { item } } }, one item per box
 -- (preserves the pending Sell/Keep + display flow untouched).
 function UnitGeneratorService.GenerateUnit(rng, containerIds)
 	rng = rng or Random.new()
@@ -51,6 +76,7 @@ function UnitGeneratorService.GenerateUnit(rng, containerIds)
 
 	-- Hidden loot: one item per Studio container. Fixed now, revealed later.
 	local containers = {}
+	local allItems = {}
 	local trueTotal = 0
 	local sortedIds = {}
 	for _, id in ipairs(containerIds) do
@@ -60,32 +86,41 @@ function UnitGeneratorService.GenerateUnit(rng, containerIds)
 	for _, id in ipairs(sortedIds) do
 		local item = ItemUtils.GenerateInstance(rng, lootOpts())
 		trueTotal += item.FinalValue
+		table.insert(allItems, item)
 		table.insert(containers, { ContainerId = id, Items = { item } })
 	end
 
-	-- Visible clues: display-only, NOT loot, NOT in the true total.
-	-- (NPCs form their own noisy estimates; humans read these.)
-	local clueCount = 2 + rng:NextInteger(0, 2)
-	local visible = {}
-	for _ = 1, clueCount do
-		local item = ItemUtils.GenerateInstance(rng, lootOpts())
-		table.insert(visible, {
-			Name = item.Name,
-			Rarity = item.Rarity,
-			Condition = item.Condition,
-			ConditionName = item.ConditionName,
-		})
+	-- Visible/hidden split over the SAME item tables: shuffle indices, first
+	-- N become visible. Visible items are real loot, part of the true total.
+	local order = {}
+	for i = 1, #allItems do
+		order[i] = i
+	end
+	for i = #order, 2, -1 do
+		local j = rng:NextInteger(1, i)
+		order[i], order[j] = order[j], order[i]
+	end
+	local visibleTarget = rollVisibleCount(rng, #allItems)
+	local visible, hidden = {}, {}
+	for rank, idx in ipairs(order) do
+		if rank <= visibleTarget then
+			table.insert(visible, allItems[idx])
+		else
+			table.insert(hidden, allItems[idx])
+		end
 	end
 
 	if GameConfig.DebugAuction then
-		print(string.format("[SA] Generated unit quality=%s trueValue=%d boxes=%d clues=%d",
-			quality, trueTotal, #containers, #visible))
+		print(string.format("[SA] Generated unit quality=%s trueValue=%d boxes=%d visible=%d hidden=%d",
+			quality, trueTotal, #containers, #visible, #hidden))
 	end
 
 	return {
 		Seed = seed,
 		Quality = quality,
+		AllItems = allItems,
 		VisibleItems = visible,
+		HiddenItems = hidden,
 		Containers = containers,
 		TrueTotalValue = trueTotal,
 	}

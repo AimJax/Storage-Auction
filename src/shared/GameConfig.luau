@@ -75,6 +75,11 @@ local GameConfig = {
 		{ Name = "Lucky Lou",     Archetype = "Clueless",     Budget = 1000, Aggression = 0.6, RiskTolerance = 1.00, Skill = 0.25, OverpayChance = 0.40, BidChance = 0.45, MaxDelay = 4.5 },
 	},
 
+	-- Inspection visibility: how many of the unit's REAL items are shown.
+	-- Weights keyed by visible count; counts above the actual item total are
+	-- ignored. Creates varying risk levels between auctions.
+	VisibleCountWeights = { [0] = 15, [1] = 35, [2] = 35, [3] = 15 },
+
 	-- Hidden unit quality profiles: weights sum to 100. JunkChance forces a
 	-- junk-def pick; ValueScale multiplies final item values; RarityLuck
 	-- biases rarity rolls upward (0 = neutral).
