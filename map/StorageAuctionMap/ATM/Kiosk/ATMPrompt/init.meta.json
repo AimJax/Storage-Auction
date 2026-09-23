@@ -1,0 +1,10 @@
+{
+  "className": "ProximityPrompt",
+  "properties": {
+    "ActionText": "Use",
+    "HoldDuration": 0.3,
+    "MaxActivationDistance": 10,
+    "ObjectText": "ATM",
+    "RequiresLineOfSight": false
+  }
+}

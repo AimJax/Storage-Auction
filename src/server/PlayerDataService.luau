@@ -22,10 +22,12 @@ end
 
 local EconomyServiceRef = nil
 local InventoryServiceRef = nil
+local DebtServiceRef = nil
 
-function PlayerDataService.Init(economyService, inventoryService)
+function PlayerDataService.Init(economyService, inventoryService, debtService)
 	EconomyServiceRef = economyService
 	InventoryServiceRef = inventoryService
+	DebtServiceRef = debtService
 end
 
 function PlayerDataService.Load(player)
@@ -50,6 +52,10 @@ function PlayerDataService.Load(player)
 		EconomyServiceRef.SetupPlayer(player, startCash)
 	end
 	InventoryServiceRef.SetupPlayer(player)
+	-- Debt fields default safely to zero for older saves (migration-safe).
+	if DebtServiceRef then
+		DebtServiceRef.LoadPersisted(player, data)
+	end
 	-- M1: kept items are session-only; Cash persists. Full collection
 	-- persistence comes in a later milestone.
 end
@@ -62,9 +68,16 @@ function PlayerDataService.Save(player)
 	if EconomyServiceRef then
 		cash = EconomyServiceRef.GetCash(player)
 	end
+	local debtData = { DebtRemaining = 0, DebtTotal = 0, LoanId = "" }
+	if DebtServiceRef then
+		debtData = DebtServiceRef.GetPersistData(player)
+	end
 	local success, result = pcall(function()
 		store:SetAsync("player_" .. player.UserId, {
 			Cash = cash,
+			DebtRemaining = debtData.DebtRemaining,
+			DebtTotal = debtData.DebtTotal,
+			LoanId = debtData.LoanId,
 			SavedAt = os.time(),
 		})
 	end)

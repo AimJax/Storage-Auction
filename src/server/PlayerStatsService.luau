@@ -65,6 +65,13 @@ function PlayerStatsService.RecordWin(player)
 	PlayerStatsService.Push(player)
 end
 
+function PlayerStatsService.GetWins(player)
+	if not player then
+		return 0
+	end
+	return auctionsWon[player.UserId] or 0
+end
+
 function PlayerStatsService.ClearPlayer(player)
 	if player then
 		auctionsWon[player.UserId] = nil

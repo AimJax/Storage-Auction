@@ -1,0 +1,10 @@
+{
+  "className": "Part",
+  "properties": {
+    "Anchored": true,
+    "CanQuery": false,
+    "CanTouch": false,
+    "CFrame": [20.0213, 6.2, -20.75, 0, 0, -1, 0, 1, 0, 1, 0, 0],
+    "Size": [22, 12, 0.5]
+  }
+}

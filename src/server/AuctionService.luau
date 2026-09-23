@@ -23,10 +23,16 @@ local MapHandles = nil
 local Remotes = nil
 local PlayerStatsService = nil
 local DisplayService = nil
+local DebtService = nil
 
--- Auction state (single active unit for M1)
+-- Auction state (single ACTIVE auction at a time, rotating tiers).
+-- Option A: 3 physical units exist; exactly one runs an auction per cycle.
 local State = "Waiting"
 local StateEndsAt = os.clock() + GameConfig.WaitingDuration
+local CurrentTierId = "Budget"
+local CurrentTier = GameConfig.AuctionTiers.Budget
+local TierIndex = 0 -- position in AuctionTierOrder; advanced each auction
+local U = nil -- ACTIVE unit handles (MapBuilder per-unit table)
 local CurrentBid = 0
 local CurrentBidder = "" -- player Name or NPC name; "" = none
 local CurrentBidderType = "" -- "Player" | "NPC" | "" (shared auction)
@@ -77,7 +83,7 @@ local function broadcast()
 	end
 	local ev = Remotes:FindFirstChild(GameConfig.RemoteNames.AuctionState)
 	if ev then
-		local center = MapHandles and MapHandles.BidCenter
+		local center = U and U.BidCenter
 		local inspection = nil
 		if State == "Inspection" and CurrentUnit then
 			local clues = {}
@@ -95,6 +101,9 @@ local function broadcast()
 		ev:FireAllClients({
 			state = State,
 			timeLeft = math.floor(timeLeft() + 0.5),
+			tier = CurrentTierId,
+			tierName = CurrentTier.DisplayName,
+			startingBid = CurrentTier.StartingBid,
 			currentBid = CurrentBid,
 			bidder = CurrentBidder,
 			bidderType = CurrentBidderType,
@@ -119,14 +128,14 @@ local function pregenerateContents()
 	ContainerItems = {}
 	ContainerOpened = {}
 	local rng = Random.new()
-	-- Container set is discovered from the Studio map (see MapBuilder).
+	-- Container set comes from the ACTIVE unit (see MapBuilder per-unit).
 	local ids = {}
-	for containerId, _box in pairs(MapHandles.Containers) do
+	for containerId, _box in pairs(U.Containers) do
 		table.insert(ids, containerId)
 	end
 	-- The unit (hidden loot + visible clues + true total) is fixed NOW.
 	-- Rummaging later reveals these exact instances, never rerolls.
-	CurrentUnit = UnitGeneratorService.GenerateUnit(rng, ids)
+	CurrentUnit = UnitGeneratorService.GenerateUnit(rng, ids, CurrentTierId)
 	for _, entry in ipairs(CurrentUnit.Containers) do
 		ContainerItems[entry.ContainerId] = entry.Items[1]
 	end
@@ -134,7 +143,7 @@ local function pregenerateContents()
 end
 
 local function resetForNextAuction()
-	CurrentBid = GameConfig.BidStartPrice
+	CurrentBid = (CurrentTier and CurrentTier.StartingBid) or GameConfig.BidStartPrice
 	CurrentBidder = ""
 	CurrentBidderType = ""
 	CurrentBidderUserId = nil
@@ -151,11 +160,50 @@ local function resetForNextAuction()
 	LastBidTime = -1000
 	ActiveHumanBidders = {}
 	HiddenValue = 0
-	if MapHandles then
-		MapBuilder.SetDoorOpen(MapHandles, false)
-		MapBuilder.SetBarrier(MapHandles, true)
-		MapBuilder.ResetContainers(MapHandles)
+	if MapHandles and MapHandles.Units then
+		-- Close/reset EVERY unit: only the active one was ever opened,
+		-- but this is idempotent and crash-safe.
+		for _, uh in pairs(MapHandles.Units) do
+			MapBuilder.SetDoorOpen(uh, false)
+			MapBuilder.SetBarrier(uh, true)
+			MapBuilder.ResetContainers(uh)
+		end
 	end
+end
+
+-- Advance to the next tier in rotation and bind its physical unit.
+-- Errors clearly if the map lacks a unit for the tier (fail fast, not weird).
+local function selectNextTierUnit()
+	local order = GameConfig.AuctionTierOrder
+	TierIndex = (TierIndex % #order) + 1
+	CurrentTierId = order[TierIndex]
+	CurrentTier = GameConfig.AuctionTiers[CurrentTierId] or GameConfig.AuctionTiers.Standard
+	local uh = MapHandles and MapHandles.Units and MapHandles.Units[CurrentTierId]
+	if not uh then
+		error("[SA] No physical unit for tier " .. tostring(CurrentTierId), 0)
+	end
+	U = uh
+	return uh
+end
+
+-- Server-authoritative tier access. Returns nil when allowed, else a
+-- human-readable denial (surfaced to the bidder, never silent).
+local function tierAccessError(player)
+	local t = CurrentTier
+	if EconomyService.GetCash(player) < (t.MinAccessCash or 0) then
+		return string.format("%s requires $%d cash.", t.DisplayName, t.MinAccessCash or 0)
+	end
+	local needWins = t.MinWins or 0
+	local needWorth = t.MinNetWorth or 0
+	if needWins > 0 or needWorth > 0 then
+		local wins = PlayerStatsService.GetWins(player)
+		local worth = DebtService.NetWorth(player)
+		if wins < needWins and worth < needWorth then
+			return string.format("%s requires %d wins or $%d net worth.",
+				t.DisplayName, needWins, needWorth)
+		end
+	end
+	return nil
 end
 
 -- Anti-snipe: a valid bid inside the window pushes the timer out, capped.
@@ -193,10 +241,15 @@ function AuctionService.TryBid(playerOrNil, amount, isNPC, npcName)
 	if not player then
 		return false, "Invalid bidder."
 	end
-	-- Local auction: must stand near the unit. Server-authoritative; the
-	-- client button is only a UX hint.
-	if not MapBuilder.IsWithinBidRadius(MapHandles, player, GameConfig.BidRadius) then
+	-- Local auction: must stand near the ACTIVE unit. Server-authoritative;
+	-- the client button is only a UX hint.
+	if not MapBuilder.IsWithinBidRadius(U, player, GameConfig.BidRadius) then
 		return false, "Move closer to the auction to bid."
+	end
+	-- Tier access: server-authoritative, never silent on denial.
+	local accessErr = tierAccessError(player)
+	if accessErr then
+		return false, accessErr
 	end
 	-- affordability check (deduct only on win for M1 simplicity)
 	if EconomyService.GetCash(player) < amount then
@@ -228,6 +281,9 @@ function AuctionService.TryOpenContainer(player, containerId)
 	if WinnerUserId ~= player.UserId then
 		return false, "Only the auction winner can open this box."
 	end
+	if U == nil or U.Containers[containerId] == nil then
+		return false, "That box is not part of this auction."
+	end
 	if PendingByUser[player.UserId] ~= nil then
 		return false, "Choose Sell or Keep first."
 	end
@@ -240,7 +296,7 @@ function AuctionService.TryOpenContainer(player, containerId)
 	end
 	ContainerOpened[containerId] = true
 	PendingByUser[player.UserId] = item
-	MapBuilder.MarkContainerOpened(MapHandles, containerId)
+	MapBuilder.MarkContainerOpened(U, containerId)
 
 	-- Push reveal UI to the opener.
 	local ev = Remotes:FindFirstChild(GameConfig.RemoteNames.ItemRevealed)
@@ -266,25 +322,33 @@ function AuctionService.TryKeepItem(player, instanceId)
 	return true, pending
 end
 
--- Resolve the pending decision as SELL: FinalValue straight to Cash, never
--- into the inventory. Falls back to selling an owned Bag item so the remote
--- keeps its original contract. Server looks up all values itself.
+-- Resolve the pending decision as SELL: FinalValue converts to Cash via
+-- DebtService (automatic loan collection), never into the inventory. Falls
+-- back to selling an owned Bag item. Server looks up all values itself.
+-- Success returns { cashGain, debtPaid, debtRemaining } (never raw totals).
 function AuctionService.TrySellItem(player, instanceId)
 	local pending = PendingByUser[player.UserId]
 	if pending and (instanceId == nil or instanceId == pending.InstanceId) then
 		PendingByUser[player.UserId] = nil
-		EconomyService.AddCash(player, pending.FinalValue)
-		PlayerStatsService.Push(player)
-		return true, pending.FinalValue
+		local sale = DebtService.CollectFromSale(player, pending.FinalValue)
+		return true, sale
 	end
 	local removed = InventoryService.RemoveItem(player, instanceId)
 	if not removed then
 		return false, "Item not found in your inventory."
 	end
-	EconomyService.AddCash(player, removed.FinalValue)
+	local sale = DebtService.CollectFromSale(player, removed.FinalValue)
 	DisplayService.OnItemRemoved(player, instanceId)
-	PlayerStatsService.Push(player)
-	return true, removed.FinalValue
+	return true, sale
+end
+
+-- Recovery eligibility needs this (DebtService dep, no require cycle:
+-- AuctionService never requires DebtService at file top).
+function AuctionService.HasPendingItem(player)
+	if not player then
+		return false
+	end
+	return PendingByUser[player.UserId] ~= nil
 end
 
 -- True while the current winner still owes a Sell/Keep decision (and is
@@ -325,10 +389,13 @@ function AuctionService.ClearPlayer(player)
 end
 
 function AuctionService.GetSnapshot()
-	local center = MapHandles and MapHandles.BidCenter
+	local center = U and U.BidCenter
 	return {
 		state = State,
 		timeLeft = math.floor(timeLeft() + 0.5),
+		tier = CurrentTierId,
+		tierName = CurrentTier.DisplayName,
+		startingBid = CurrentTier.StartingBid,
 		currentBid = CurrentBid,
 		bidder = CurrentBidder,
 		bidderType = CurrentBidderType,
@@ -344,11 +411,11 @@ end
 -- move out anyone still physically inside. Any other time, players walk
 -- freely and are never relocated. Never errors on missing characters.
 local function ejectAnyoneStillInside()
-	if MapHandles == nil then
+	if U == nil then
 		return
 	end
 	for _, player in ipairs(Players:GetPlayers()) do
-		MapBuilder.MovePlayerOutsideIfInside(MapHandles, player)
+		MapBuilder.MovePlayerOutsideIfInside(U, player)
 	end
 end
 
@@ -397,20 +464,33 @@ local function stateLoop()
 		if State == "Waiting" then
 			if timeLeft() <= 0 then
 				resetForNextAuction()
-				pregenerateContents()
-				NpcBidders = NPCBidderService.CreateBidders(
-					GameConfig.NPCs,
-					if CurrentUnit then CurrentUnit.VisibleItems else {},
-					if CurrentUnit then #CurrentUnit.HiddenItems else 0)
-				-- Bidding starts at BidStartPrice; first valid bid must exceed it.
-				CurrentBid = GameConfig.BidStartPrice - ItemUtils.BidIncrementFor(GameConfig.BidStartPrice)
-				if CurrentBid < 0 then
-					CurrentBid = 0
+				-- Bind the next tier's physical unit. Guarded: a map
+				-- misconfiguration retries instead of killing the loop.
+				local ok, uh = pcall(selectNextTierUnit)
+				if not ok or not uh then
+					warn("[SA] Tier select failed: " .. tostring(uh) .. " — retrying.")
+					StateEndsAt = now() + 10
+				else
+					pregenerateContents()
+					NpcBidders = NPCBidderService.CreateBidders(
+						GameConfig.NPCs,
+						if CurrentUnit then CurrentUnit.VisibleItems else {},
+						if CurrentUnit then #CurrentUnit.HiddenItems else 0)
+					-- Bidding starts at the tier starting bid; first valid bid
+					-- must exceed it by one increment.
+					CurrentBid = CurrentTier.StartingBid - ItemUtils.BidIncrementFor(CurrentTier.StartingBid)
+					if CurrentBid < 0 then
+						CurrentBid = 0
+					end
+					if GameConfig.DebugAuction then
+						print(string.format("[SA] Tier=%s StartingBid=%d",
+							CurrentTierId, CurrentTier.StartingBid))
+					end
+					MapBuilder.SetDoorOpen(U, true)
+					MapBuilder.SetBarrier(U, true)
+					MapBuilder.ResetContainers(U)
+					setState("Inspection", GameConfig.InspectionDuration)
 				end
-				MapBuilder.SetDoorOpen(MapHandles, true)
-				MapBuilder.SetBarrier(MapHandles, true)
-				MapBuilder.ResetContainers(MapHandles)
-				setState("Inspection", GameConfig.InspectionDuration)
 			end
 			task.wait(0.5)
 		elseif State == "Inspection" then
@@ -420,14 +500,16 @@ local function stateLoop()
 			task.wait(0.5)
 		elseif State == "Bidding" then
 			-- NPC tick ~every 0.7s, reacting to the GLOBAL current bid
-			-- no matter who placed it (human or NPC).
+			-- no matter who placed it (human or NPC). Tier pressure applies
+			-- only while no human participates (empty-server filler boost).
 			local t = now()
 			local function npcTryBid(name, amount)
 				local ok, _msg = AuctionService.TryBid(nil, amount, true, name)
 				return ok
 			end
+			local tierMult = if ActiveHumanCount() == 0 then (CurrentTier.NPCPressureMult or 1) else 1
 			NPCBidderService.Tick(NpcBidders, t, CurrentBid, CurrentBidder,
-				LastBidTime, ActiveHumanCount(), timeLeft(), CurrentBidderType == "Player", npcTryBid)
+				LastBidTime, ActiveHumanCount(), timeLeft(), CurrentBidderType == "Player", tierMult, npcTryBid)
 			if timeLeft() <= 0 then
 				finishBidding()
 			end
@@ -437,8 +519,8 @@ local function stateLoop()
 				if WinnerUserId ~= nil then
 					-- Player won: no teleport. Entrance opens, winner walks
 					-- in whenever they choose. Prompts turn on for Rummaging.
-					MapBuilder.SetBarrier(MapHandles, false)
-					MapBuilder.SetPromptsEnabled(MapHandles, true)
+					MapBuilder.SetBarrier(U, false)
+					MapBuilder.SetPromptsEnabled(U, true)
 					setState("Rummaging", GameConfig.RummageDuration)
 				else
 					-- NPC won or no bids: show result, then next auction.
@@ -460,8 +542,8 @@ local function stateLoop()
 				RummageGraceEndsAt = nil
 				-- Cleanup is a grace period: prompts off, but the entrance
 				-- stays open so everyone can walk out naturally.
-				MapBuilder.SetPromptsEnabled(MapHandles, false)
-				MapBuilder.SetBarrier(MapHandles, false)
+				MapBuilder.SetPromptsEnabled(U, false)
+				MapBuilder.SetBarrier(U, false)
 				setState("Cleanup", GameConfig.CleanupDuration)
 			elseif timeLeft() <= 0 then
 				if winnerHasPending() then
@@ -469,20 +551,20 @@ local function stateLoop()
 					-- still gets to choose. Never auto-keep here.
 					if RummageGraceEndsAt == nil then
 						RummageGraceEndsAt = now() + GameConfig.DecisionGracePeriod
-						MapBuilder.SetPromptsEnabled(MapHandles, false)
+						MapBuilder.SetPromptsEnabled(U, false)
 					elseif now() >= RummageGraceEndsAt then
 						-- Grace ran out: keep (never delete), then Cleanup.
 						if WinnerUserId ~= nil then
 							forceKeepPending(WinnerUserId)
 						end
 						RummageGraceEndsAt = nil
-						MapBuilder.SetBarrier(MapHandles, false)
+						MapBuilder.SetBarrier(U, false)
 						setState("Cleanup", GameConfig.CleanupDuration)
 					end
 				else
 					RummageGraceEndsAt = nil
-					MapBuilder.SetPromptsEnabled(MapHandles, false)
-					MapBuilder.SetBarrier(MapHandles, false)
+					MapBuilder.SetPromptsEnabled(U, false)
+					MapBuilder.SetBarrier(U, false)
 					setState("Cleanup", GameConfig.CleanupDuration)
 				end
 			end
@@ -511,6 +593,7 @@ function AuctionService.Init(deps)
 	Remotes = deps.Remotes
 	PlayerStatsService = deps.PlayerStatsService
 	DisplayService = deps.DisplayService
+	DebtService = deps.DebtService
 
 	-- Wire RemoteFunctions.
 	local placeBid = Remotes:FindFirstChild(GameConfig.RemoteNames.PlaceBid)
@@ -544,20 +627,23 @@ function AuctionService.Init(deps)
 
 	-- ProximityPrompt path (server-authoritative, no client trust needed).
 	-- Rejections are pushed back as toasts so non-winners get feedback.
-	if MapHandles then
-		for containerId, box in pairs(MapHandles.Containers) do
-			local prompt = box:FindFirstChildOfClass("ProximityPrompt")
-			if prompt then
-				prompt.Enabled = false
-				prompt.Triggered:Connect(function(player)
-					local ok, result = AuctionService.TryOpenContainer(player, containerId)
-					if not ok then
-						local notify = Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
-						if notify then
-							notify:FireClient(player, tostring(result))
+	-- Wired for EVERY unit once; only the active unit's prompts are enabled.
+	if MapHandles and MapHandles.Units then
+		for _, uh in pairs(MapHandles.Units) do
+			for containerId, box in pairs(uh.Containers) do
+				local prompt = box:FindFirstChildOfClass("ProximityPrompt")
+				if prompt then
+					prompt.Enabled = false
+					prompt.Triggered:Connect(function(player)
+						local ok, result = AuctionService.TryOpenContainer(player, containerId)
+						if not ok then
+							local notify = Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
+							if notify then
+								notify:FireClient(player, tostring(result))
+							end
 						end
-					end
-				end)
+					end)
+				end
 			end
 		end
 	end
@@ -565,6 +651,11 @@ function AuctionService.Init(deps)
 	resetForNextAuction()
 	State = "Waiting"
 	StateEndsAt = now() + GameConfig.WaitingDuration
+	-- Pre-bind the first tier's unit so pre-auction broadcasts already carry
+	-- its bid center (the Waiting branch rebinds identically each cycle).
+	if MapHandles.Units then
+		U = MapHandles.Units.Budget
+	end
 	task.spawn(stateLoop)
 end
 

@@ -43,8 +43,11 @@ end
 function AuctionClient.Start()
 	remotes = ReplicatedStorage:WaitForChild(GameConfig.RemotesFolderName)
 	local refs = UIController.Build()
+	local debtState = { remaining = 0, total = 0, loanId = "" }
+	local playerStats = nil
 	local function refresh()
 		UIController.UpdateStatus(snapshot, cash, player.Name, inRadius)
+		UIController.SetRecoverVisible(cash < GameConfig.RecoveryCashThreshold)
 	end
 	refresh()
 
@@ -123,7 +126,19 @@ function AuctionClient.Start()
 	end)
 	getRemote(GameConfig.RemoteNames.StatsChanged, "RemoteEvent").OnClientEvent:Connect(function(stats)
 		if typeof(stats) == "table" then
+			playerStats = stats
 			UIController.UpdateStats(stats)
+			if UIController.IsLoanVisible() then
+				UIController.RefreshLoan(debtState, GameConfig.LoanProducts, playerStats)
+			end
+		end
+	end)
+	getRemote(GameConfig.RemoteNames.DebtChanged, "RemoteEvent").OnClientEvent:Connect(function(debt)
+		if typeof(debt) == "table" then
+			debtState = debt
+			if UIController.IsLoanVisible() then
+				UIController.RefreshLoan(debtState, GameConfig.LoanProducts, playerStats)
+			end
 		end
 	end)
 	getRemote(GameConfig.RemoteNames.Notify, "RemoteEvent").OnClientEvent:Connect(function(payload)
@@ -167,7 +182,23 @@ function AuctionClient.Start()
 		end
 	end)
 
-	-- Sell / Keep (both auto-close the reveal panel)
+	-- Sell / Keep (both auto-close the reveal panel).
+	-- Sell results carry the debt breakdown: { cashGain, debtPaid, ... }.
+	local function toastSale(res)
+		local sale = res.result
+		if typeof(sale) == "table" then
+			local gained = tonumber(sale.cashGain) or 0
+			local paid = tonumber(sale.debtPaid) or 0
+			if paid > 0 then
+				UIController.ShowToast(string.format("Sold $%s · loan -$%s · you +$%s",
+					formatMoney(gained + paid), formatMoney(paid), formatMoney(gained)), 4)
+			else
+				UIController.ShowToast("Sold for $" .. formatMoney(gained) .. "!")
+			end
+		else
+			UIController.ShowToast("Sold for $" .. formatMoney(sale) .. "!")
+		end
+	end
 	refs.SellButton.MouseButton1Click:Connect(function()
 		local instanceId = UIController.GetRevealInstanceId()
 		if not instanceId then
@@ -179,7 +210,7 @@ function AuctionClient.Start()
 		end)
 		UIController.HideReveal()
 		if ok and typeof(res) == "table" and res.ok then
-			UIController.ShowToast("Sold for $" .. formatMoney(res.result) .. "!")
+			toastSale(res)
 		else
 			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Sell failed"
 			UIController.ShowToast(msg)
@@ -223,7 +254,7 @@ function AuctionClient.Start()
 		if ok and typeof(res) == "table" and res.ok then
 			UIController.HideItemPanel()
 			UIController.HideSlotPicker()
-			UIController.ShowToast("Sold for $" .. formatMoney(res.result) .. "!")
+			toastSale(res)
 		else
 			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Sell failed"
 			UIController.ShowToast(msg)
@@ -273,6 +304,92 @@ function AuctionClient.Start()
 	end)
 	refs.SlotCloseBtn.MouseButton1Click:Connect(function()
 		UIController.HideSlotPicker()
+	end)
+
+	-- ATM kiosk: client-side prompt opens the loan menu (opening UI needs
+	-- no server trust; every money action below is a validated RemoteFunction).
+	task.spawn(function()
+		local ok, map = pcall(function()
+			return game.Workspace:WaitForChild("StorageAuctionMap", 10)
+		end)
+		if not ok or not map then
+			return
+		end
+		local atm = map:FindFirstChild("ATM", true)
+		local prompt = atm and atm:FindFirstChild("ATMPrompt", true)
+		if prompt and prompt:IsA("ProximityPrompt") then
+			prompt.Triggered:Connect(function()
+				UIController.ShowLoanMenu(debtState, GameConfig.LoanProducts, playerStats)
+			end)
+		end
+	end)
+
+	-- Loan menu actions (all server-validated).
+	for i, btn in ipairs(refs.LoanProductBtns) do
+		local products = GameConfig.LoanProducts
+		local product = products and products[i]
+		local productId = product and product.Id
+		local productAmount = product and product.Amount
+		local productRepay = product and product.Repay
+		btn.MouseButton1Click:Connect(function()
+			if not productId then
+				return
+			end
+			local fn = getRemote(GameConfig.RemoteNames.TakeLoan, "RemoteFunction")
+			local ok, res = pcall(function()
+				return fn:InvokeServer(productId)
+			end)
+			if ok and typeof(res) == "table" and res.ok then
+				UIController.ShowToast(string.format("Borrowed $%s · repay $%s",
+					formatMoney(productAmount), formatMoney(productRepay)))
+			else
+				local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Loan failed"
+				UIController.ShowToast(msg)
+			end
+		end)
+	end
+	refs.LoanPayBtn.MouseButton1Click:Connect(function()
+		local fn = getRemote(GameConfig.RemoteNames.PayDebt, "RemoteFunction")
+		local amount = tonumber(refs.LoanPayBox and refs.LoanPayBox.Text or nil)
+		local ok, res = pcall(function()
+			return fn:InvokeServer(amount)
+		end)
+		if ok and typeof(res) == "table" and res.ok then
+			local d = res.result or {}
+			UIController.ShowToast("Debt remaining: $" .. formatMoney(tonumber(d.remaining) or 0))
+		else
+			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Pay failed"
+			UIController.ShowToast(msg)
+		end
+	end)
+	refs.LoanPayFullBtn.MouseButton1Click:Connect(function()
+		local fn = getRemote(GameConfig.RemoteNames.PayDebt, "RemoteFunction")
+		local ok, res = pcall(function()
+			return fn:InvokeServer(nil)
+		end)
+		if ok and typeof(res) == "table" and res.ok then
+			UIController.ShowToast("Debt cleared!")
+		else
+			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Pay failed"
+			UIController.ShowToast(msg)
+		end
+	end)
+	refs.LoanCloseBtn.MouseButton1Click:Connect(function()
+		UIController.HideLoanMenu()
+	end)
+
+	-- Bankruptcy recovery (server validates everything; button is UX only).
+	refs.RecoverButton.MouseButton1Click:Connect(function()
+		local fn = getRemote(GameConfig.RemoteNames.ClaimRecovery, "RemoteFunction")
+		local ok, res = pcall(function()
+			return fn:InvokeServer()
+		end)
+		if ok and typeof(res) == "table" and res.ok then
+			UIController.ShowToast("Recovery grant: +$" .. formatMoney(tonumber(res.result) or 0))
+		else
+			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Recovery failed"
+			UIController.ShowToast(msg)
+		end
 	end)
 	-- Local proximity check for the auction HUD (UX only; server validates).
 	-- Runs on a slow tick so entering/leaving the radius updates immediately

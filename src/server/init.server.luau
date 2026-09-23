@@ -18,6 +18,7 @@ local DisplayService = require(script.DisplayService)
 local PlayerStatsService = require(script.PlayerStatsService)
 local PlotService = require(script.PlotService)
 local WarehouseService = require(script.WarehouseService)
+local DebtService = require(script.DebtService)
 
 -- 1) Remotes (created at runtime so Studio needs zero manual setup).
 local function ensureRemotes()
@@ -35,12 +36,16 @@ local function ensureRemotes()
 		{ GameConfig.RemoteNames.Notify, "RemoteEvent" },
 		{ GameConfig.RemoteNames.DisplayChanged, "RemoteEvent" },
 		{ GameConfig.RemoteNames.StatsChanged, "RemoteEvent" },
+		{ GameConfig.RemoteNames.DebtChanged, "RemoteEvent" },
 		{ GameConfig.RemoteNames.PlaceBid, "RemoteFunction" },
 		{ GameConfig.RemoteNames.OpenContainer, "RemoteFunction" },
 		{ GameConfig.RemoteNames.KeepItem, "RemoteFunction" },
 		{ GameConfig.RemoteNames.SellItem, "RemoteFunction" },
 		{ GameConfig.RemoteNames.DisplayItem, "RemoteFunction" },
 		{ GameConfig.RemoteNames.RemoveDisplay, "RemoteFunction" },
+		{ GameConfig.RemoteNames.TakeLoan, "RemoteFunction" },
+		{ GameConfig.RemoteNames.PayDebt, "RemoteFunction" },
+		{ GameConfig.RemoteNames.ClaimRecovery, "RemoteFunction" },
 	}
 	for _, d in ipairs(defs) do
 		if not folder:FindFirstChild(d[1]) then
@@ -57,7 +62,14 @@ local remotes = ensureRemotes()
 -- 2) Services.
 EconomyService.Init(remotes)
 InventoryService.Init(remotes)
-PlayerDataService.Init(EconomyService, InventoryService)
+DebtService.Init({
+	EconomyService = EconomyService,
+	InventoryService = InventoryService,
+	PlayerStatsService = PlayerStatsService,
+	AuctionService = AuctionService,
+	Remotes = remotes,
+})
+PlayerDataService.Init(EconomyService, InventoryService, DebtService)
 
 -- 3) Map.
 -- 3) Map: Studio-authored. Errors clearly if StorageAuctionMap is missing
@@ -74,6 +86,7 @@ AuctionService.Init({
 	Remotes = remotes,
 	PlayerStatsService = PlayerStatsService,
 	DisplayService = DisplayService,
+	DebtService = DebtService,
 })
 
 -- 5) Showroom displays + progression stats (depend on services above).
@@ -122,6 +135,7 @@ local function onPlayerAdded(player)
 			if dispEv then
 				dispEv:FireClient(player, DisplayService.GetDisplayState(player))
 			end
+			DebtService.Push(player)
 			PlayerStatsService.Push(player)
 		end
 	end)
@@ -135,6 +149,7 @@ local function onPlayerRemoving(player)
 	PlayerStatsService.ClearPlayer(player)
 	InventoryService.ClearPlayer(player)
 	EconomyService.ClearPlayer(player)
+	DebtService.ClearPlayer(player)
 end
 
 Players.PlayerAdded:Connect(onPlayerAdded)

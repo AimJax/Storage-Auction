@@ -11,7 +11,8 @@
 --
 --   Workspace
 --   → StorageAuctionMap (Model)
---     → StorageUnit (Model)
+--     → StorageUnit / StorageUnit2 / StorageUnit3 (Models, one per tier)
+--         TierId attribute: "Budget" | "Standard" | "HighRoller" (REQUIRED)
 --         Floor, LeftWall, RightWall, BackWall, Roof ( Parts, optional decor)
 --         Door (Part, REQUIRED — visibility/collision driven)
 --         Barrier (Part, REQUIRED — collision driven)
@@ -19,6 +20,7 @@
 --         Container_1..N (Parts, REQUIRED ≥1 — ContainerId attr, prompts)
 --         UnitBounds (Part marker, optional — falls back to unit extents)
 --         ReturnPoint (Part marker, REQUIRED — safety-eject destination)
+--         BidCenter (Part marker, optional — falls back to shared one)
 --     → AuctionArea (Model, optional container)
 --         BidCenter (Part marker, REQUIRED — bid-radius center)
 --         Mat (Part, optional)
@@ -37,6 +39,10 @@ local MAP_NAME = "StorageAuctionMap"
 local UNIT_NAME = "StorageUnit"
 local AREA_NAME = "AuctionArea"
 local SEATS_NAME = "Seats"
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local GameConfig = require(Shared.GameConfig)
 
 local function failMissing(list)
 	error(
@@ -106,19 +112,52 @@ function MapBuilder.GetHandles()
 		return inst
 	end
 
-	local unitPath = MAP_NAME .. "." .. UNIT_NAME
-	local unit = req(map, UNIT_NAME, unitPath)
-	local door = req(unit, "Door", unitPath .. ".Door")
-	local barrier = req(unit, "Barrier", unitPath .. ".Barrier")
-	local floorPart = req(unit, "Floor", unitPath .. ".Floor")
-	local returnPoint = req(unit, "ReturnPoint", unitPath .. ".ReturnPoint")
+	-- Auction units: every direct Model child carrying a TierId attribute
+	-- naming a GameConfig tier (e.g. StorageUnit/Budget, StorageUnit2/
+	-- Standard, StorageUnit3/HighRoller). Tier identity comes from parts,
+	-- never hard-coded coordinates.
+	local tierIds = {}
+	if GameConfig.AuctionTierOrder then
+		for _, id in ipairs(GameConfig.AuctionTierOrder) do
+			tierIds[id] = true
+		end
+	end
+	local unitModels = {} -- { { tierId, model } }
+	for _, child in ipairs(map:GetChildren()) do
+		if child:IsA("Model") then
+			local tierId = child:GetAttribute("TierId")
+			if typeof(tierId) == "string" and tierIds[tierId] then
+				table.insert(unitModels, { tierId = tierId, model = child })
+			end
+		end
+	end
+	if #unitModels == 0 then
+		failMissing({ MAP_NAME .. ".<StorageUnit> (at least one Model with a TierId attribute)" })
+	end
 
 	local area = map:FindFirstChild(AREA_NAME)
-	local bidCenter = req(area, "BidCenter", MAP_NAME .. "." .. AREA_NAME .. ".BidCenter")
+	local sharedBidCenter = area and area:FindFirstChild("BidCenter") or nil
 
-	-- Containers: discover every Container_* part (freely repositionable).
-	local containers = {}
-	if unit then
+	local function buildUnitHandles(unit, unitPath)
+		local door = req(unit, "Door", unitPath .. ".Door")
+		local barrier = req(unit, "Barrier", unitPath .. ".Barrier")
+		local floorPart = req(unit, "Floor", unitPath .. ".Floor")
+		local returnPoint = req(unit, "ReturnPoint", unitPath .. ".ReturnPoint")
+
+		-- Per-unit BidCenter if authored, else the shared auction-area one.
+		local bidCenter = unit:FindFirstChild("BidCenter")
+		if bidCenter and not bidCenter:IsA("BasePart") then
+			bidCenter = nil
+		end
+		if not bidCenter then
+			bidCenter = sharedBidCenter
+		end
+		if not bidCenter then
+			table.insert(missing, unitPath .. ".BidCenter (or shared " .. MAP_NAME .. "." .. AREA_NAME .. ".BidCenter)")
+		end
+
+		-- Containers: discover every Container_* part (freely repositionable).
+		local containers = {}
 		for _, child in ipairs(unit:GetChildren()) do
 			if child:IsA("BasePart") and string.match(child.Name, "^Container_") then
 				local id = child:GetAttribute("ContainerId")
@@ -129,13 +168,27 @@ function MapBuilder.GetHandles()
 				containers[id] = child
 			end
 		end
+		local containerCount = 0
+		for _ in pairs(containers) do
+			containerCount += 1
+		end
+		if containerCount == 0 then
+			table.insert(missing, unitPath .. ".Container_1 (at least one Container_* part)")
+		end
+		return {
+			Unit = unit,
+			Door = door,
+			Barrier = barrier,
+			Floor = floorPart,
+			ReturnPoint = returnPoint,
+			BidCenterPart = bidCenter,
+			Containers = containers,
+		}
 	end
-	local containerCount = 0
-	for _ in pairs(containers) do
-		containerCount += 1
-	end
-	if containerCount == 0 then
-		table.insert(missing, unitPath .. ".Container_1 (at least one Container_* part)")
+
+	local units = {} -- [TierId] = per-unit handles
+	for _, entry in ipairs(unitModels) do
+		units[entry.tierId] = buildUnitHandles(entry.model, MAP_NAME .. "." .. entry.model.Name)
 	end
 
 	if #missing > 0 then
@@ -144,29 +197,69 @@ function MapBuilder.GetHandles()
 
 	-- Type-check the required instances (a Model renamed to Door helps nobody).
 	local typeErrors = {}
-	if not door:IsA("BasePart") then
-		table.insert(typeErrors, unitPath .. ".Door must be a Part")
-	end
-	if not barrier:IsA("BasePart") then
-		table.insert(typeErrors, unitPath .. ".Barrier must be a Part")
-	end
-	if not floorPart:IsA("BasePart") then
-		table.insert(typeErrors, unitPath .. ".Floor must be a Part")
-	end
-	if not bidCenter:IsA("BasePart") then
-		table.insert(typeErrors, MAP_NAME .. "." .. AREA_NAME .. ".BidCenter must be a Part")
-	end
-	if not returnPoint:IsA("BasePart") then
-		table.insert(typeErrors, unitPath .. ".ReturnPoint must be a Part")
+	for tierId, uh in pairs(units) do
+		local prefix = MAP_NAME .. ".<?>[" .. tierId .. "]."
+		if not uh.Door:IsA("BasePart") then
+			table.insert(typeErrors, prefix .. "Door must be a Part")
+		end
+		if not uh.Barrier:IsA("BasePart") then
+			table.insert(typeErrors, prefix .. "Barrier must be a Part")
+		end
+		if not uh.Floor:IsA("BasePart") then
+			table.insert(typeErrors, prefix .. "Floor must be a Part")
+		end
+		if not uh.BidCenterPart:IsA("BasePart") then
+			table.insert(typeErrors, prefix .. "BidCenter must be a Part")
+		end
+		if not uh.ReturnPoint:IsA("BasePart") then
+			table.insert(typeErrors, prefix .. "ReturnPoint must be a Part")
+		end
 	end
 	if #typeErrors > 0 then
 		failMissing(typeErrors)
 	end
 
 	-- Optional pieces: use when present, ignore when absent.
-	local unitBounds = unit:FindFirstChild("UnitBounds")
-	if unitBounds and not unitBounds:IsA("BasePart") then
-		unitBounds = nil
+	for tierId, uh in pairs(units) do
+		local unitBounds = uh.Unit:FindFirstChild("UnitBounds")
+		if unitBounds and not unitBounds:IsA("BasePart") then
+			unitBounds = nil
+		end
+		uh.UnitBounds = unitBounds
+
+		-- Runtime stealth for markers + prompt setup (state itself comes later).
+		stealthMarker(unitBounds)
+		stealthMarker(uh.BidCenterPart)
+		stealthMarker(uh.ReturnPoint)
+		-- The barrier must start invisible even before the first state reset.
+		-- (Collision itself is driven by SetBarrier during state transitions.)
+		if uh.Barrier then
+			uh.Barrier.Transparency = 1
+			uh.Barrier.CanTouch = false
+			uh.Barrier.CanQuery = false
+		end
+		local index = 0
+		for _, box in pairs(uh.Containers) do
+			index += 1
+			standardPrompt(box, index)
+		end
+
+		local floorTop = uh.Floor.Position.Y + uh.Floor.Size.Y / 2
+		local center: Vector3
+		local boundHalf: Vector3
+		if unitBounds then
+			center = unitBounds.Position
+			boundHalf = unitBounds.Size / 2
+		else
+			local cf, size = uh.Unit:GetBoundingBox()
+			center = cf.Position
+			boundHalf = size / 2
+		end
+		uh.UnitCenter = Vector3.new(center.X, floorTop, center.Z)
+		uh.BoundHalf = boundHalf
+		uh.FloorTop = floorTop
+		uh.BidCenter = uh.BidCenterPart.Position
+		uh.ReturnCFrame = uh.ReturnPoint.CFrame
 	end
 	-- Warehouse template (optional): cloned per player by WarehouseService.
 	-- Absence only disables warehouses/displays; the auction loop runs on.
@@ -183,46 +276,9 @@ function MapBuilder.GetHandles()
 		warn("[SA] No SpawnLocation found; players may spawn at the origin. Add one under " .. MAP_NAME .. ".")
 	end
 
-	-- Runtime stealth for markers + prompt setup (state itself comes later).
-	stealthMarker(unitBounds)
-	stealthMarker(bidCenter)
-	stealthMarker(returnPoint)
-	-- The barrier must start invisible even before the first state reset.
-	-- (Collision itself is driven by SetBarrier during state transitions.)
-	if barrier then
-		barrier.Transparency = 1
-		barrier.CanTouch = false
-		barrier.CanQuery = false
-	end
-	local index = 0
-	for _, box in pairs(containers) do
-		index += 1
-		standardPrompt(box, index)
-	end
-
-	local floorTop = floorPart.Position.Y + floorPart.Size.Y / 2
-	local center: Vector3
-	local boundHalf: Vector3
-	if unitBounds then
-		center = unitBounds.Position
-		boundHalf = unitBounds.Size / 2
-	else
-		local cf, size = unit:GetBoundingBox()
-		center = cf.Position
-		boundHalf = size / 2
-	end
-
 	return {
 		Map = map,
-		Unit = unit,
-		Door = door,
-		Barrier = barrier,
-		Containers = containers,
-		UnitCenter = Vector3.new(center.X, floorTop, center.Z),
-		BoundHalf = boundHalf,
-		FloorTop = floorTop,
-		BidCenter = bidCenter.Position,
-		ReturnCFrame = returnPoint.CFrame,
+		Units = units, -- [TierId] = per-unit handles (Door/Barrier/Containers/...)
 		WarehouseTemplate = warehouseTemplate, -- Model or nil
 	}
 end

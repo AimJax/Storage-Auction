@@ -11,6 +11,66 @@ local GameConfig = {
 	-- Auction rules
 	BidStartPrice = 50,
 
+	-- Auction tiers (Option A: 3 physical units, ONE active auction at a
+	-- time, cycling Budget -> Standard -> HighRoller). TierId matches the
+	-- TierId attribute on StorageUnit/StorageUnit2/StorageUnit3.
+	AuctionTierOrder = { "Budget", "Standard", "HighRoller" },
+	AuctionTiers = {
+		Budget = {
+			DisplayName = "BUDGET",
+			StartingBid = 25,
+			MinAccessCash = 0,
+			MinWins = 0,
+			MinNetWorth = 0,
+			NPCPressureMult = 0.85,
+			QualityWeights = { Trash = 30, Low = 35, Average = 25, Good = 8, Premium = 2, Jackpot = 1 },
+			JunkChanceMult = 1.5,
+			RarityLuckBonus = 0,
+			ValueScaleMult = { Min = 0.6, Max = 1.0 },
+		},
+		Standard = {
+			DisplayName = "STANDARD",
+			StartingBid = 100,
+			MinAccessCash = 300,
+			MinWins = 0,
+			MinNetWorth = 0,
+			NPCPressureMult = 1.0,
+			QualityWeights = { Trash = 10, Low = 22, Average = 33, Good = 20, Premium = 12, Jackpot = 3 },
+			JunkChanceMult = 1.0,
+			RarityLuckBonus = 0,
+			ValueScaleMult = { Min = 0.8, Max = 1.3 },
+		},
+		HighRoller = {
+			DisplayName = "HIGH ROLLER",
+			StartingBid = 500,
+			MinAccessCash = 2500,
+			MinWins = 3,
+			MinNetWorth = 5000,
+			NPCPressureMult = 1.15,
+			QualityWeights = { Trash = 3, Low = 10, Average = 27, Good = 30, Premium = 22, Jackpot = 8 },
+			JunkChanceMult = 0.4,
+			RarityLuckBonus = 2,
+			ValueScaleMult = { Min = 1.2, Max = 2.0 },
+		},
+	},
+
+	-- Bankruptcy recovery (safety net, not income): only tops cash UP TO the
+	-- grant target, only below threshold, only when net worth is also low,
+	-- and only once per cooldown. Never touches debt.
+	RecoveryCashThreshold = 50,
+	RecoveryGrant = 125,
+	RecoveryCooldown = 300,
+
+	-- ATM loans: fixed borrow/repay products. One active loan max
+	-- (DebtRemaining > 0 blocks). Eligibility per product below.
+	LoanProducts = {
+		{ Id = "A", Amount = 250, Repay = 300, MinWins = 0, MinNetWorth = 0 },
+		{ Id = "B", Amount = 500, Repay = 625, MinWins = 2, MinNetWorth = 1500 },
+		{ Id = "C", Amount = 1000, Repay = 1300, MinWins = 5, MinNetWorth = 5000 },
+	},
+	-- Automatic debt collection from every item sale (fraction of proceeds).
+	DebtRepaymentRate = 0.25,
+
 	-- Price-tiered minimum increments (single source; no hard-coded math).
 	BidIncrementTiers = {
 		{ MaxPrice = 499, Increment = 25 },
@@ -128,10 +188,14 @@ local GameConfig = {
 		Notify = "Notify",
 		DisplayChanged = "DisplayChanged",
 		StatsChanged = "StatsChanged",
+		DebtChanged = "DebtChanged",
 		PlaceBid = "PlaceBid",
 		OpenContainer = "OpenContainer",
 		KeepItem = "KeepItem",
 		SellItem = "SellItem",
+		TakeLoan = "TakeLoan",
+		PayDebt = "PayDebt",
+		ClaimRecovery = "ClaimRecovery",
 		DisplayItem = "DisplayItem",
 		RemoveDisplay = "RemoveDisplay",
 	},

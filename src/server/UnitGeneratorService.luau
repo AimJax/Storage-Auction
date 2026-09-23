@@ -59,18 +59,19 @@ end
 -- AllItems (no clones, no rerolls). TrueTotalValue covers visible + hidden.
 -- Containers: { { ContainerId, Items = { item } } }, one item per box
 -- (preserves the pending Sell/Keep + display flow untouched).
-function UnitGeneratorService.GenerateUnit(rng, containerIds)
+function UnitGeneratorService.GenerateUnit(rng, containerIds, tierId)
 	rng = rng or Random.new()
+	local tier = GameConfig.AuctionTiers[tierId] or GameConfig.AuctionTiers.Standard
 	local seed = rng:NextInteger(1, 999999999)
-	local quality = rollQuality(rng)
+	local quality = rollQuality(rng, tier.QualityWeights)
 	local qdef = GameConfig.UnitQuality.Defs[quality] or GameConfig.UnitQuality.Defs.Average
 
 	local function lootOpts()
 		return {
-			JunkChance = qdef.JunkChance,
-			ValueScaleMin = qdef.ValueScaleMin,
-			ValueScaleMax = qdef.ValueScaleMax,
-			RarityLuck = qdef.RarityLuck,
+			JunkChance = math.min(0.9, qdef.JunkChance * (tier.JunkChanceMult or 1)),
+			ValueScaleMin = qdef.ValueScaleMin * (tier.ValueScaleMult and tier.ValueScaleMult.Min or 1),
+			ValueScaleMax = qdef.ValueScaleMax * (tier.ValueScaleMult and tier.ValueScaleMult.Max or 1),
+			RarityLuck = qdef.RarityLuck + (tier.RarityLuckBonus or 0),
 		}
 	end
 
@@ -111,13 +112,14 @@ function UnitGeneratorService.GenerateUnit(rng, containerIds)
 	end
 
 	if GameConfig.DebugAuction then
-		print(string.format("[SA] Generated unit quality=%s trueValue=%d boxes=%d visible=%d hidden=%d",
-			quality, trueTotal, #containers, #visible, #hidden))
+		print(string.format("[SA] Tier=%s Generated unit quality=%s trueValue=%d boxes=%d visible=%d hidden=%d",
+			tostring(tierId), quality, trueTotal, #containers, #visible, #hidden))
 	end
 
 	return {
 		Seed = seed,
 		Quality = quality,
+		TierId = tierId,
 		AllItems = allItems,
 		VisibleItems = visible,
 		HiddenItems = hidden,

@@ -59,9 +59,10 @@ place file, is hand-editable, and Rojo never touches Workspace (see
   reaction pause; per-NPC bid history. TrueTotalValue is never an input.
 - `UnitGeneratorService.luau` — pre-Inspection hidden loot + visible clues +
   true total (server only; rummage reveals these exact instances).
-- `MapBuilder.luau` — map BEHAVIOR over Studio-authored geometry: locates and
-  validates `Workspace/StorageAuctionMap`, drives door/barrier/prompts/bounds.
-  Never creates parts. Missing required pieces error clearly in Output.
+- `MapBuilder.luau` — map BEHAVIOR over Studio-authored geometry: discovers
+  tier-tagged auction units (`TierId` Budget/Standard/HighRoller) plus shared
+  markers; drives door/barrier/prompts/bounds per ACTIVE unit. Never creates
+  parts. Missing required pieces error clearly in Output.
 - `PlayerDataService.luau` — DataStore (pcall-guarded; session-only fallback).
 - `DisplayService.luau` — per-player display assignments (server-validated)
   inside that player's runtime warehouse; rarity proxies parented to the
@@ -73,6 +74,8 @@ place file, is hand-editable, and Rojo never touches Workspace (see
   `WarehouseTemplate` at plot origins; per-player slots; destroy on release.
 - `PlayerStatsService.luau` — session stats: AuctionsWon, CollectionValue
   (computed from inventory), premium-unlock teaser.
+- `DebtService.luau` — fixed ATM loans, persistent debt, sale-diversion
+  repayment, recovery grants. All server-validated; persists via PlayerData.
 
 ### Client modules (`src/client/`)
 - `init.client.luau` → `AuctionClient` → `UIController`.

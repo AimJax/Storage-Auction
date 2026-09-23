@@ -346,6 +346,119 @@ function UIController.Build()
 	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, refs.SlotCloseBtn)
 	refs.SlotPanel = slotPanel
 
+	-- ATM loan menu: fixed products, debt status, manual repayment. Compact.
+	local loan = mk("Frame", {
+		Name = "Loan",
+		Size = UDim2.new(0, 260, 0, 300),
+		Position = UDim2.new(0.5, -130, 0.5, -150),
+		BackgroundColor3 = Color3.fromRGB(26, 26, 34),
+		BackgroundTransparency = 0.05,
+		Visible = false,
+	}, gui)
+	mk("UICorner", { CornerRadius = UDim.new(0, 10) }, loan)
+	mk("UIStroke", { Color = Color3.fromRGB(90, 90, 110), Thickness = 1 }, loan)
+	mk("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 24),
+		BackgroundTransparency = 1,
+		Text = "ATM LOANS",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+	}, loan)
+	refs.LoanDebtLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 36),
+		Position = UDim2.new(0, 8, 0, 26),
+		BackgroundTransparency = 1,
+		Text = "No active loan",
+		TextColor3 = Color3.fromRGB(225, 225, 230),
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextWrapped = true,
+	}, loan)
+	refs.LoanProductBtns = {}
+	for i = 1, 3 do
+		local btn = mk("TextButton", {
+			Size = UDim2.new(1, -16, 0, 30),
+			Position = UDim2.new(0, 8, 0, 64 + (i - 1) * 34),
+			BackgroundColor3 = Color3.fromRGB(40, 40, 52),
+			Text = "Loan " .. i,
+			TextColor3 = Color3.new(1, 1, 1),
+			Font = Enum.Font.Gotham,
+			TextSize = 12,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, loan)
+		mk("UICorner", { CornerRadius = UDim.new(0, 6) }, btn)
+		refs.LoanProductBtns[i] = btn
+	end
+	refs.LoanPayBox = mk("TextBox", {
+		Size = UDim2.new(0, 100, 0, 30),
+		Position = UDim2.new(0, 8, 0, 170),
+		BackgroundColor3 = Color3.fromRGB(40, 40, 52),
+		Text = "",
+		PlaceholderText = "Amount",
+		TextColor3 = Color3.new(1, 1, 1),
+		PlaceholderColor3 = Color3.fromRGB(150, 150, 160),
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		ClearTextOnFocus = false,
+	}, loan)
+	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, refs.LoanPayBox)
+	refs.LoanPayBtn = mk("TextButton", {
+		Size = UDim2.new(0, 66, 0, 30),
+		Position = UDim2.new(0, 112, 0, 170),
+		BackgroundColor3 = Color3.fromRGB(70, 110, 180),
+		Text = "PAY",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+	}, loan)
+	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, refs.LoanPayBtn)
+	refs.LoanPayFullBtn = mk("TextButton", {
+		Size = UDim2.new(0, 66, 0, 30),
+		Position = UDim2.new(1, -74, 0, 170),
+		BackgroundColor3 = Color3.fromRGB(70, 110, 180),
+		Text = "FULL",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+	}, loan)
+	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, refs.LoanPayFullBtn)
+	refs.LoanCloseBtn = mk("TextButton", {
+		Size = UDim2.new(1, -16, 0, 28),
+		Position = UDim2.new(0, 8, 0, 206),
+		BackgroundColor3 = Color3.fromRGB(60, 60, 70),
+		Text = "CLOSE",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+	}, loan)
+	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, refs.LoanCloseBtn)
+	mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 56),
+		Position = UDim2.new(0, 8, 0, 238),
+		BackgroundTransparency = 1,
+		Text = "Fixed totals, no interest over time. 25% of item sales auto-repays. One loan at a time.",
+		TextColor3 = Color3.fromRGB(150, 150, 160),
+		Font = Enum.Font.Gotham,
+		TextSize = 10,
+		TextWrapped = true,
+	}, loan)
+	refs.LoanFrame = loan
+
+	-- Recovery button: bottom-left, only while broke (client toggles).
+	refs.RecoverButton = mk("TextButton", {
+		Name = "RecoverButton",
+		Size = UDim2.new(0, 110, 0, 32),
+		Position = UDim2.new(0, 12, 1, -48),
+		BackgroundColor3 = Color3.fromRGB(140, 110, 30),
+		Visible = false,
+		Text = "RECOVER",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+	}, gui)
+	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.RecoverButton)
+
 	-- Reveal panel: compact, centered. Auto-closes on Sell/Keep (see client).
 	local reveal = mk("Frame", {
 		Name = "Reveal",
@@ -487,7 +600,11 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 	end
 
 	if refs.StateLabel then
-		refs.StateLabel.Text = string.upper(state) .. " · " .. tostring(snapshot.timeLeft or 0) .. "s"
+		local tierPrefix = ""
+		if snapshot.tierName and snapshot.tierName ~= "" then
+			tierPrefix = tostring(snapshot.tierName) .. " · "
+		end
+		refs.StateLabel.Text = tierPrefix .. string.upper(state) .. " · " .. tostring(snapshot.timeLeft or 0) .. "s"
 	end
 	if refs.BidLabel then
 		local function tag(name, kind)
@@ -512,7 +629,7 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 			end
 			refs.BidLabel.Text = "$" .. formatMoney(snapshot.currentBid or 0) .. " · " .. who
 		elseif state == "Inspection" then
-			refs.BidLabel.Text = "Starts at $" .. formatMoney(snapshot.currentBid or 0)
+			refs.BidLabel.Text = "Starts at $" .. formatMoney(snapshot.startingBid or snapshot.currentBid or 0)
 		else
 			refs.BidLabel.Text = "Next auction soon"
 		end
@@ -748,6 +865,58 @@ function UIController.RefreshSlotPicker(displayState)
 			btn.Text = i .. ": " .. tostring(occupant.name)
 		else
 			btn.Text = i .. ": (empty)"
+		end
+	end
+end
+
+function UIController.ShowLoanMenu(debtState, products, stats)
+	if not refs.LoanFrame then
+		return
+	end
+	refs.LoanFrame.Visible = true
+	UIController.RefreshLoan(debtState, products, stats)
+end
+
+function UIController.HideLoanMenu()
+	if refs.LoanFrame then
+		refs.LoanFrame.Visible = false
+	end
+end
+
+function UIController.IsLoanVisible()
+	return refs.LoanFrame and refs.LoanFrame.Visible or false
+end
+
+function UIController.SetRecoverVisible(visible)
+	if refs.RecoverButton then
+		refs.RecoverButton.Visible = visible == true
+	end
+end
+
+-- debtState: { remaining, total, loanId }. products: GameConfig LoanProducts.
+-- stats: StatsChanged payload (for future eligibility display).
+function UIController.RefreshLoan(debtState, products, stats)
+	if refs.LoanDebtLabel then
+		local remaining = tonumber(debtState and debtState.remaining) or 0
+		local total = tonumber(debtState and debtState.total) or 0
+		if remaining > 0 then
+			local pct = 0
+			if total > 0 then
+				pct = math.floor((total - remaining) / total * 100 + 0.5)
+			end
+			refs.LoanDebtLabel.Text = string.format("Debt: $%s of $%s (%d%% repaid)",
+				formatMoney(remaining), formatMoney(total), pct)
+		else
+			refs.LoanDebtLabel.Text = "No active loan"
+		end
+	end
+	if refs.LoanProductBtns and products then
+		for i, btn in ipairs(refs.LoanProductBtns) do
+			local p = products[i]
+			if p then
+				btn.Text = string.format("%s: Borrow $%s → repay $%s",
+					tostring(p.Id), formatMoney(p.Amount), formatMoney(p.Repay))
+			end
 		end
 	end
 end

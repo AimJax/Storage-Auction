@@ -1,0 +1,9 @@
+{
+  "className": "ProximityPrompt",
+  "properties": {
+    "ActionText": "Open",
+    "HoldDuration": 0.4,
+    "ObjectText": "Storage Box 2",
+    "RequiresLineOfSight": false
+  }
+}

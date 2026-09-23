@@ -151,12 +151,14 @@ end
 -- a reaction pause; only one NPC tends to answer per tick (dampened chains).
 -- activeHumans scales all pressure down (PvP takes over); timeLeft drives
 -- late-bid suppression; highestIsHuman gates it. Returns updated currentBid.
-function NPCBidderService.Tick(bidders, now, currentBid, currentBidderName, lastBidAt, activeHumans, timeLeft, highestIsHuman, tryBid)
+function NPCBidderService.Tick(bidders, now, currentBid, currentBidderName, lastBidAt, activeHumans, timeLeft, highestIsHuman, tierNPCMult, tryBid)
 	if now - (lastBidAt or -1000) < GameConfig.NPCReactionPause then
 		return currentBid -- let the last bid breathe; no instant chains
 	end
 	activeHumans = math.max(0, math.floor(tonumber(activeHumans) or 0))
 	local pressure = GameConfig.NPCPressureByHumans[math.min(activeHumans, 3)] or 0.1
+	-- Tier filler boost applies ONLY on empty servers (no active humans).
+	pressure = math.min(pressure * (tonumber(tierNPCMult) or 1), 1.25)
 	highestIsHuman = highestIsHuman == true
 	local answeredThisTick = false
 	for _, b in ipairs(bidders) do
@@ -171,7 +173,8 @@ function NPCBidderService.Tick(bidders, now, currentBid, currentBidderName, last
 			end
 			continue
 		end
-		local effectiveMax = math.floor(b.MaxBid * (0.45 + 0.55 * pressure) + 0.5)
+		local effectiveMax = math.min(b.MaxBid,
+			math.floor(b.MaxBid * (0.45 + 0.55 * pressure) + 0.5))
 		if now >= b.CooldownUntil and currentBid < effectiveMax then
 			local chance = b.BidChance * pressure
 			if timeLeft <= GameConfig.NPCLateWindow and highestIsHuman then
