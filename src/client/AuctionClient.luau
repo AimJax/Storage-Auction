@@ -147,7 +147,7 @@ function AuctionClient.Start()
 		if not fn then
 			return
 		end
-		local amount = (snapshot.currentBid or 0) + (snapshot.minIncrement or GameConfig.MinBidIncrement)
+		local amount = (snapshot.currentBid or 0) + (snapshot.minIncrement or 25)
 		local ok, res = pcall(function()
 			return fn:InvokeServer(amount)
 		end)

@@ -11,6 +11,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared.GameConfig)
 local ItemUtils = require(Shared.ItemUtils)
+local UnitGeneratorService = require(script.Parent.UnitGeneratorService)
 
 local AuctionService = {}
 
@@ -28,13 +29,17 @@ local State = "Waiting"
 local StateEndsAt = os.clock() + GameConfig.WaitingDuration
 local CurrentBid = 0
 local CurrentBidder = "" -- player Name or NPC name; "" = none
+local CurrentBidderType = "" -- "Player" | "NPC" | "" (shared auction)
 local CurrentBidderUserId = nil -- set only for player bids
 local WinnerName = ""
+local WinnerType = "" -- "Player" | "NPC" | ""
 local WinnerUserId = nil -- nil => NPC won / no winner
 local NpcBidders = {}
-local HiddenValue = 0
+local HiddenValue = 0 -- server-only true total of hidden loot
+local CurrentUnit = nil -- full UnitGeneratorService unit (server only)
 local ContainerItems = {} -- [containerId] = itemInstance (pre-generated, hidden)
 local ContainerOpened = {} -- [containerId] = true once opened
+local BidExtensionsUsed = 0 -- anti-snipe cap counter, per auction
 
 -- Pending Sell/Keep decisions. [UserId] = itemInstance the player revealed
 -- but has not resolved yet. Server-owned: opening never grants ownership;
@@ -61,16 +66,27 @@ local function broadcast()
 	local ev = Remotes:FindFirstChild(GameConfig.RemoteNames.AuctionState)
 	if ev then
 		local center = MapHandles and MapHandles.BidCenter
+		local inspection = nil
+		if State == "Inspection" and CurrentUnit then
+			local clues = {}
+			for _, v in ipairs(CurrentUnit.VisibleItems) do
+				table.insert(clues, { name = v.Name, condition = v.ConditionName, rarity = v.Rarity })
+			end
+			inspection = { boxCount = #CurrentUnit.Containers, clues = clues }
+		end
 		ev:FireAllClients({
 			state = State,
 			timeLeft = math.floor(timeLeft() + 0.5),
 			currentBid = CurrentBid,
 			bidder = CurrentBidder,
-			minIncrement = GameConfig.MinBidIncrement,
+			bidderType = CurrentBidderType,
+			minIncrement = ItemUtils.BidIncrementFor(CurrentBid),
 			winner = WinnerName,
+			winnerType = WinnerType,
 			isWinner = false, -- client compares winner to its own name
 			bidRadius = GameConfig.BidRadius,
 			bidCenter = if center then { x = center.X, y = center.Y, z = center.Z } else nil,
+			inspection = inspection, -- visible clues only; never true values
 		})
 	end
 end
@@ -81,41 +97,54 @@ local function setState(next, duration)
 	broadcast()
 end
 
-local function hiddenTotal()
-	local total = 0
-	for _, item in pairs(ContainerItems) do
-		total += item.FinalValue
-	end
-	return total
-end
-
 local function pregenerateContents()
 	ContainerItems = {}
 	ContainerOpened = {}
 	local rng = Random.new()
 	-- Container set is discovered from the Studio map (see MapBuilder).
+	local ids = {}
 	for containerId, _box in pairs(MapHandles.Containers) do
-		ContainerItems[containerId] = ItemUtils.GenerateInstance(rng)
+		table.insert(ids, containerId)
 	end
-	HiddenValue = hiddenTotal()
+	-- The unit (hidden loot + visible clues + true total) is fixed NOW.
+	-- Rummaging later reveals these exact instances, never rerolls.
+	CurrentUnit = UnitGeneratorService.GenerateUnit(rng, ids)
+	for _, entry in ipairs(CurrentUnit.Containers) do
+		ContainerItems[entry.ContainerId] = entry.Items[1]
+	end
+	HiddenValue = CurrentUnit.TrueTotalValue
 end
 
 local function resetForNextAuction()
 	CurrentBid = GameConfig.BidStartPrice
 	CurrentBidder = ""
+	CurrentBidderType = ""
 	CurrentBidderUserId = nil
 	WinnerName = ""
+	WinnerType = ""
 	WinnerUserId = nil
 	NpcBidders = {}
+	CurrentUnit = nil
 	ContainerItems = {}
 	ContainerOpened = {}
 	PendingByUser = {}
 	RummageGraceEndsAt = nil
+	BidExtensionsUsed = 0
 	HiddenValue = 0
 	if MapHandles then
 		MapBuilder.SetDoorOpen(MapHandles, false)
 		MapBuilder.SetBarrier(MapHandles, true)
 		MapBuilder.ResetContainers(MapHandles)
+	end
+end
+
+-- Anti-snipe: a valid bid inside the window pushes the timer out, capped.
+local function applyAntiSnipe()
+	if timeLeft() < GameConfig.AntiSnipeWindow
+		and BidExtensionsUsed < GameConfig.AntiSnipeMaxExtensions
+	then
+		StateEndsAt = now() + GameConfig.AntiSnipeExtension
+		BidExtensionsUsed += 1
 	end
 end
 
@@ -126,14 +155,16 @@ function AuctionService.TryBid(playerOrNil, amount, isNPC, npcName)
 		return false, "Auction is not accepting bids right now."
 	end
 	amount = math.floor(tonumber(amount) or 0)
-	local minValid = CurrentBid + GameConfig.MinBidIncrement
+	local minValid = CurrentBid + ItemUtils.BidIncrementFor(CurrentBid)
 	if amount < minValid then
 		return false, "Bid must be at least $" .. minValid .. "."
 	end
 	if isNPC then
 		CurrentBid = amount
 		CurrentBidder = npcName or "NPC"
+		CurrentBidderType = "NPC"
 		CurrentBidderUserId = nil
+		applyAntiSnipe()
 		broadcast()
 		return true, "NPC bid accepted."
 	end
@@ -152,7 +183,9 @@ function AuctionService.TryBid(playerOrNil, amount, isNPC, npcName)
 	end
 	CurrentBid = amount
 	CurrentBidder = player.Name
+	CurrentBidderType = "Player"
 	CurrentBidderUserId = player.UserId
+	applyAntiSnipe()
 	broadcast()
 	return true, "Bid accepted."
 end
@@ -270,8 +303,10 @@ function AuctionService.GetSnapshot()
 		timeLeft = math.floor(timeLeft() + 0.5),
 		currentBid = CurrentBid,
 		bidder = CurrentBidder,
-		minIncrement = GameConfig.MinBidIncrement,
+		bidderType = CurrentBidderType,
+		minIncrement = ItemUtils.BidIncrementFor(CurrentBid),
 		winner = WinnerName,
+		winnerType = WinnerType,
 		bidRadius = GameConfig.BidRadius,
 		bidCenter = if center then { x = center.X, y = center.Y, z = center.Z } else nil,
 	}
@@ -293,6 +328,7 @@ local function finishBidding()
 	-- Determine winner.
 	if CurrentBidder == "" then
 		WinnerName = ""
+		WinnerType = ""
 		WinnerUserId = nil
 	elseif CurrentBidderUserId ~= nil then
 		local player = Players:GetPlayerByUserId(CurrentBidderUserId)
@@ -300,21 +336,29 @@ local function finishBidding()
 			local ok = EconomyService.DeductCash(player, CurrentBid)
 			if ok then
 				WinnerName = player.Name
+				WinnerType = "Player"
 				WinnerUserId = player.UserId
 				PlayerStatsService.RecordWin(player)
 			else
 				WinnerName = ""
+				WinnerType = ""
 				WinnerUserId = nil
 			end
 		else
 			-- Winner left or can't pay: reset cleanly, no winner.
 			WinnerName = ""
+			WinnerType = ""
 			WinnerUserId = nil
 		end
 	else
 		-- NPC won.
 		WinnerName = CurrentBidder
+		WinnerType = "NPC"
 		WinnerUserId = nil
+	end
+	if GameConfig.DebugAuction then
+		print(string.format("[SA] Auction result winner=%s type=%s bid=%d trueValue=%d",
+			tostring(WinnerName), tostring(WinnerType), CurrentBid, HiddenValue))
 	end
 	setState("Sold", GameConfig.SoldDuration)
 end
@@ -328,7 +372,7 @@ local function stateLoop()
 				pregenerateContents()
 				NpcBidders = NPCBidderService.CreateBidders(GameConfig.NPCs, HiddenValue)
 				-- Bidding starts at BidStartPrice; first valid bid must exceed it.
-				CurrentBid = GameConfig.BidStartPrice - GameConfig.MinBidIncrement
+				CurrentBid = GameConfig.BidStartPrice - ItemUtils.BidIncrementFor(GameConfig.BidStartPrice)
 				if CurrentBid < 0 then
 					CurrentBid = 0
 				end
@@ -344,12 +388,13 @@ local function stateLoop()
 			end
 			task.wait(0.5)
 		elseif State == "Bidding" then
-			-- NPC tick ~every 0.7s
+			-- NPC tick ~every 0.7s, reacting to the GLOBAL current bid
+			-- no matter who placed it (human or NPC).
 			local t = now()
-			local function npcTryBid(name, amount, _isNPC)
+			local function npcTryBid(name, amount)
 				AuctionService.TryBid(nil, amount, true, name)
 			end
-			NPCBidderService.Tick(NpcBidders, t, CurrentBid, GameConfig.MinBidIncrement, npcTryBid)
+			NPCBidderService.Tick(NpcBidders, t, CurrentBid, CurrentBidder, npcTryBid)
 			if timeLeft() <= 0 then
 				finishBidding()
 			end

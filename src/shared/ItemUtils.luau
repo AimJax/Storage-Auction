@@ -11,15 +11,24 @@ local ItemUtils = {}
 
 local nextInstanceSeq = 0
 
-function ItemUtils.RollRarity(rng)
+function ItemUtils.RollRarity(rng, luck)
 	rng = rng or Random.new()
+	luck = luck or 0
 	local total = 0
+	local weights = {}
 	for _, name in ipairs(RarityConfig.Order) do
-		total += RarityConfig.Definitions[name].Weight
+		local w = RarityConfig.Definitions[name].Weight
+		if name == "Rare" or name == "Epic" or name == "Legendary" or name == "Mythic" then
+			w *= 1 + luck * 0.7
+		elseif name == "Common" then
+			w /= 1 + luck * 0.4
+		end
+		weights[name] = w
+		total += w
 	end
 	local roll = rng:NextNumber() * total
 	for _, name in ipairs(RarityConfig.Order) do
-		roll -= RarityConfig.Definitions[name].Weight
+		roll -= weights[name]
 		if roll <= 0 then
 			return name
 		end
@@ -40,7 +49,37 @@ end
 function ItemUtils.CalcFinalValue(baseValue, rarityName, condition)
 	local rarityDef = RarityConfig.Definitions[rarityName]
 	local rarityMult = if rarityDef then rarityDef.ValueMult else 1.0
-	return math.floor(baseValue * rarityMult * ItemUtils.ConditionMultiplier(condition) + 0.5)
+	local raw = math.floor(baseValue * rarityMult * ItemUtils.ConditionMultiplier(condition) + 0.5)
+	return math.clamp(raw, GameConfig.MinItemValue, GameConfig.MaxItemValue)
+end
+
+-- Named condition bands for display (multiplier stays formula-driven).
+function ItemUtils.ConditionName(condition)
+	condition = tonumber(condition) or 0
+	if condition < 20 then
+		return "Broken"
+	elseif condition < 40 then
+		return "Poor"
+	elseif condition < 60 then
+		return "Used"
+	elseif condition < 80 then
+		return "Good"
+	elseif condition < 95 then
+		return "Excellent"
+	else
+		return "Mint"
+	end
+end
+
+-- Single source for bid increments: first tier whose MaxPrice covers price.
+function ItemUtils.BidIncrementFor(price)
+	price = tonumber(price) or 0
+	for _, tier in ipairs(GameConfig.BidIncrementTiers) do
+		if price <= tier.MaxPrice then
+			return tier.Increment
+		end
+	end
+	return GameConfig.BidIncrementTiers[#GameConfig.BidIncrementTiers].Increment
 end
 
 function ItemUtils.RollItemDef(rng)
@@ -57,20 +96,36 @@ function ItemUtils.RollItemDef(rng)
 end
 
 -- Server-side: create a full randomized item instance.
-function ItemUtils.GenerateInstance(rng)
+-- opts (all optional): JunkChance (force junk def), ValueScaleMin/Max
+-- (multiply final value), RarityLuck (bias rarity upward).
+function ItemUtils.GenerateInstance(rng, opts)
 	rng = rng or Random.new()
-	local def = ItemUtils.RollItemDef(rng)
-	local rarity = ItemUtils.RollRarity(rng)
+	opts = opts or {}
+	local def
+	if opts.JunkChance and rng:NextNumber() < opts.JunkChance then
+		def = ItemDefinitions.RollJunkDef(rng)
+	else
+		def = ItemUtils.RollItemDef(rng)
+	end
+	local rarity = ItemUtils.RollRarity(rng, opts.RarityLuck or 0)
 	local condition = ItemUtils.RollCondition(rng)
+	local scale = 1
+	if opts.ValueScaleMin or opts.ValueScaleMax then
+		scale = rng:NextNumber(opts.ValueScaleMin or 1, opts.ValueScaleMax or 1)
+	end
 	nextInstanceSeq += 1
 	return {
 		InstanceId = "m1_" .. tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(nextInstanceSeq),
 		ItemId = def.Id,
 		Name = def.Name,
 		BaseValue = def.BaseValue,
+		ModelKey = def.ModelKey,
 		Rarity = rarity,
 		Condition = condition,
-		FinalValue = ItemUtils.CalcFinalValue(def.BaseValue, rarity, condition),
+		ConditionName = ItemUtils.ConditionName(condition),
+		FinalValue = math.clamp(
+			math.floor(ItemUtils.CalcFinalValue(def.BaseValue, rarity, condition) * scale + 0.5),
+			GameConfig.MinItemValue, GameConfig.MaxItemValue),
 		-- Reserved for future modifiers (Signed, Golden, Sealed, serials...)
 		-- without rewriting inventory architecture.
 		Modifiers = {},

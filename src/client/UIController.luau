@@ -17,6 +17,7 @@ local player = Players.LocalPlayer
 local gui = nil
 local refs = {}
 local lastState = ""
+local lastInspectionKey = nil
 local toastToken = 0
 
 local TOAST_DURATION = 3.2
@@ -84,6 +85,7 @@ function UIController.Build()
 	end
 	gui = mk("ScreenGui", { Name = "SA_UI", ResetOnSpawn = false, IgnoreGuiInset = false }, pg)
 	lastState = ""
+	lastInspectionKey = nil
 	toastToken += 1
 
 	-- Top-left: current bid + bidder. Top-center: state + countdown.
@@ -111,6 +113,54 @@ function UIController.Build()
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	}, gui)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, refs.ToastLabel)
+
+	-- Inspection clues: visible contents + sealed box count. Shown ONLY
+	-- during Inspection. Names/conditions only — never values or rarity of
+	-- hidden loot (hidden rarity IS shown for visible items: they're visible).
+	local insp = mk("Frame", {
+		Name = "Inspection",
+		Size = UDim2.new(0, 250, 0, 150),
+		Position = UDim2.new(1, -262, 0, 52),
+		BackgroundColor3 = Color3.fromRGB(18, 18, 24),
+		BackgroundTransparency = 0.25,
+		Visible = false,
+	}, gui)
+	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, insp)
+	mk("TextLabel", {
+		Name = "Title",
+		Size = UDim2.new(1, 0, 0, 22),
+		BackgroundTransparency = 1,
+		Text = "VISIBLE CONTENTS",
+		TextColor3 = Color3.fromRGB(255, 225, 130),
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+	}, insp)
+	refs.InspectionRows = {}
+	for i = 1, 4 do
+		local row = mk("TextLabel", {
+			Size = UDim2.new(1, -16, 0, 20),
+			Position = UDim2.new(0, 8, 0, 24 + (i - 1) * 20),
+			BackgroundTransparency = 1,
+			Text = "",
+			TextColor3 = Color3.new(1, 1, 1),
+			Font = Enum.Font.Gotham,
+			TextSize = 12,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, insp)
+		refs.InspectionRows[i] = row
+	end
+	refs.InspectionFooter = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 20),
+		Position = UDim2.new(0, 8, 0, 106),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = Color3.fromRGB(170, 170, 180),
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, insp)
+	refs.InspectionFrame = insp
 
 	-- Contextual hint: small, bottom-center, only for states that need it.
 	refs.HintLabel = mk("TextLabel", {
@@ -440,10 +490,16 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 		refs.StateLabel.Text = string.upper(state) .. " · " .. tostring(snapshot.timeLeft or 0) .. "s"
 	end
 	if refs.BidLabel then
+		local function tag(name, kind)
+			if kind == "NPC" and name ~= "" then
+				return name .. " (NPC)"
+			end
+			return name
+		end
 		if state == "Sold" or state == "Rummaging" then
 			local w = snapshot.winner
 			if w and w ~= "" then
-				refs.BidLabel.Text = "Won by " .. w .. " · $" .. formatMoney(snapshot.currentBid or 0)
+				refs.BidLabel.Text = "Won by " .. tag(w, snapshot.winnerType) .. " · $" .. formatMoney(snapshot.currentBid or 0)
 			else
 				refs.BidLabel.Text = "No winner"
 			end
@@ -451,6 +507,8 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 			local who = snapshot.bidder
 			if who == nil or who == "" then
 				who = "no bids"
+			else
+				who = tag(who, snapshot.bidderType)
 			end
 			refs.BidLabel.Text = "$" .. formatMoney(snapshot.currentBid or 0) .. " · " .. who
 		elseif state == "Inspection" then
@@ -487,6 +545,44 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 			setHint(nil)
 		end
 	end
+
+	-- Inspection clues refresh only on state entry or payload change.
+	local inspKey = state
+	if state == "Inspection" and snapshot.inspection then
+		local insp = snapshot.inspection
+		inspKey ..= "|" .. tostring(insp.boxCount or 0) .. "|" .. tostring(#(insp.clues or {}))
+		local first = insp.clues and insp.clues[1]
+		if first then
+			inspKey ..= "|" .. tostring(first.name)
+		end
+	end
+	if inspKey ~= lastInspectionKey then
+		lastInspectionKey = inspKey
+		UIController.UpdateInspection(state == "Inspection" and snapshot.inspection or nil)
+	end
+end
+
+function UIController.UpdateInspection(inspection)
+	if not refs.InspectionFrame then
+		return
+	end
+	if not inspection then
+		refs.InspectionFrame.Visible = false
+		return
+	end
+	refs.InspectionFrame.Visible = true
+	local clues = inspection.clues or {}
+	for i, row in ipairs(refs.InspectionRows or {}) do
+		local clue = clues[i]
+		if clue then
+			row.Text = string.format("%s (%s)", tostring(clue.name), tostring(clue.condition or "?"))
+			row.TextColor3 = rarityColor(clue.rarity)
+		else
+			row.Text = ""
+		end
+	end
+	local boxes = tonumber(inspection.boxCount) or 0
+	refs.InspectionFooter.Text = string.format("%d sealed box%s · contents hidden", boxes, if boxes == 1 then "" else "es")
 end
 
 function UIController.ShowReveal(item)
@@ -499,7 +595,8 @@ function UIController.ShowReveal(item)
 	refs.RevealRarity.Text = string.upper(tostring(item.Rarity))
 	refs.RevealRarity.TextColor3 = rarityColor(item.Rarity)
 	refs.RevealDetail.Text = string.format(
-		"Condition %d%%  ·  Value $%s",
+		"%s · %d%%  ·  Value $%s",
+		tostring(item.ConditionName or item.Condition),
 		tonumber(item.Condition) or 0,
 		formatMoney(tonumber(item.FinalValue) or 0)
 	)

@@ -10,7 +10,23 @@ local GameConfig = {
 
 	-- Auction rules
 	BidStartPrice = 50,
-	MinBidIncrement = 25,
+
+	-- Price-tiered minimum increments (single source; no hard-coded math).
+	BidIncrementTiers = {
+		{ MaxPrice = 499, Increment = 25 },
+		{ MaxPrice = 1999, Increment = 50 },
+		{ MaxPrice = 4999, Increment = 100 },
+		{ MaxPrice = math.huge, Increment = 250 },
+	},
+
+	-- Anti-snipe: a valid bid with less than Window seconds left pushes the
+	-- timer out to Extension seconds, at most MaxExtensions times per auction.
+	AntiSnipeWindow = 3,
+	AntiSnipeExtension = 5,
+	AntiSnipeMaxExtensions = 6,
+
+	-- Verbose server Output for auction debugging (never sent to clients).
+	DebugAuction = false,
 
 	-- Bidding is local: players must stand within BidRadius (studs, XZ) of
 	-- the auction area center in front of the unit. Server-authoritative.
@@ -39,16 +55,40 @@ local GameConfig = {
 	PremiumAuctionsWinsRequired = 5,
 	PremiumAuctionsValueRequired = 5000,
 
-	-- Value formula: FinalValue = floor(BaseValue * RarityMult * ConditionMult)
+	-- Value formula: FinalValue = clamp(floor(BaseValue * RarityMult * ConditionMult), Min/Max)
 	-- ConditionMult = ConditionFloor + (1 - ConditionFloor) * (Condition / 100)
 	ConditionFloor = 0.3,
 	MinCondition = 10,
 	MaxCondition = 100,
+	MinItemValue = 5,
+	MaxItemValue = 6000,
 
-	-- NPC bidders (simple, for solo testing)
+	-- NPC bidder personalities (config-driven, deterministic).
+	-- Skill 0..1: 1 = near-perfect value estimate, 0 = wild guess.
+	-- RiskTolerance: fraction of estimated value used as max bid baseline.
+	-- Aggression: bigger/faster counter-bids. OverpayChance: chance per
+	-- auction to stretch ~18% past the risk-based max. Budget: hard cap.
 	NPCs = {
-		{ Name = "Dealer Dan", BidChance = 0.65, MaxDelay = 3.0, ValueNoiseMin = 0.6, ValueNoiseMax = 1.3 },
-		{ Name = "Collector Kate", BidChance = 0.5, MaxDelay = 4.0, ValueNoiseMin = 0.7, ValueNoiseMax = 1.5 },
+		{ Name = "Dealer Dan",    Archetype = "Conservative", Budget = 1500, Aggression = 0.3, RiskTolerance = 0.55, Skill = 0.70, OverpayChance = 0.05, BidChance = 0.60, MaxDelay = 3.2 },
+		{ Name = "Collector Kate",Archetype = "Expert",       Budget = 3000, Aggression = 0.5, RiskTolerance = 0.75, Skill = 0.90, OverpayChance = 0.08, BidChance = 0.55, MaxDelay = 3.6 },
+		{ Name = "Rico Flipper",  Archetype = "Aggressive",   Budget = 2200, Aggression = 0.9, RiskTolerance = 0.90, Skill = 0.55, OverpayChance = 0.35, BidChance = 0.75, MaxDelay = 2.2 },
+		{ Name = "Lucky Lou",     Archetype = "Clueless",     Budget = 1000, Aggression = 0.6, RiskTolerance = 1.00, Skill = 0.25, OverpayChance = 0.40, BidChance = 0.45, MaxDelay = 4.5 },
+	},
+
+	-- Hidden unit quality profiles: weights sum to 100. JunkChance forces a
+	-- junk-def pick; ValueScale multiplies final item values; RarityLuck
+	-- biases rarity rolls upward (0 = neutral).
+	UnitQuality = {
+		Weights = { Trash = 16, Low = 26, Average = 32, Good = 15, Premium = 8, Jackpot = 3 },
+		Order = { "Trash", "Low", "Average", "Good", "Premium", "Jackpot" },
+		Defs = {
+			Trash   = { MinItems = 2, MaxItems = 3, JunkChance = 0.70, ValueScaleMin = 0.3, ValueScaleMax = 0.6, RarityLuck = 0 },
+			Low     = { MinItems = 2, MaxItems = 4, JunkChance = 0.45, ValueScaleMin = 0.5, ValueScaleMax = 0.9, RarityLuck = 0 },
+			Average = { MinItems = 3, MaxItems = 4, JunkChance = 0.25, ValueScaleMin = 0.8, ValueScaleMax = 1.2, RarityLuck = 1 },
+			Good    = { MinItems = 3, MaxItems = 5, JunkChance = 0.12, ValueScaleMin = 1.0, ValueScaleMax = 1.6, RarityLuck = 2 },
+			Premium = { MinItems = 4, MaxItems = 5, JunkChance = 0.05, ValueScaleMin = 1.4, ValueScaleMax = 2.2, RarityLuck = 3 },
+			Jackpot = { MinItems = 4, MaxItems = 6, JunkChance = 0.00, ValueScaleMin = 1.8, ValueScaleMax = 3.0, RarityLuck = 5 },
+		},
 	},
 
 	-- Remote folder / event names (must match server Remotes module)

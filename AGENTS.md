@@ -53,7 +53,10 @@ place file, is hand-editable, and Rojo never touches Workspace (see
 - `InventoryService.luau` — server-side ownership list.
 - `ItemGenerationService` logic lives in shared `ItemUtils.GenerateInstance`
   (server calls it; client never generates).
-- `NPCBidderService.luau` — maxWilling = hiddenValue × noise; chance + delay.
+- `NPCBidderService.luau` — config personalities; per-auction estimate +
+  MaxBid from true value, skill noise, risk, overpay roll, budget cap.
+- `UnitGeneratorService.luau` — pre-Inspection hidden loot + visible clues +
+  true total (server only; rummage reveals these exact instances).
 - `MapBuilder.luau` — map BEHAVIOR over Studio-authored geometry: locates and
   validates `Workspace/StorageAuctionMap`, drives door/barrier/prompts/bounds.
   Never creates parts. Missing required pieces error clearly in Output.
