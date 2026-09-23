@@ -84,6 +84,15 @@ function MapBuilder.GetHandles()
 		failMissing({ "Workspace." .. MAP_NAME .. " (run tools/BuildMapOnce.luau once, then Save the place)" })
 	end
 
+	-- LEGACY MIGRATION ONLY: destroy a stale PlayerShowroom left in old
+	-- places (Argon keepUnknowns can preserve it). Exact name match; never
+	-- touches WarehouseDistrict, WarehouseTemplate, StorageUnit, AuctionArea.
+	local legacyShowroom = map:FindFirstChild("PlayerShowroom")
+	if legacyShowroom then
+		warn("[SA] Removing legacy PlayerShowroom remnant (superseded by warehouses).")
+		legacyShowroom:Destroy()
+	end
+
 	local missing = {}
 	local function req(parent, name, path)
 		if not parent then

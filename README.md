@@ -190,8 +190,9 @@ Multi-client: Studio **Test** tab → **Clients and Servers** → 2 Players →
 9. KEEP an item → Bag count rises; Bag panel shows
    `Collection $X · Won N` and premium LOCKED status. Joining assigns
    NOTHING — you start with no plot and no warehouse.
-10. Walk east to the warehouse district (past x≈80, well outside the bid
-    radius). Unclaimed plot signs read AVAILABLE with a "Claim Plot" prompt.
+10. Walk east along the access road to the warehouse district (plots start
+    past x≈190, well outside the bid radius). Unclaimed plot signs read
+    AVAILABLE with a "Claim Plot" prompt.
     Hold **E** on Plot_01's sign → sign shows your name, warehouse spawns on
     that exact plot. E on another player's plot refuses ("already claimed").
 11. Open Bag → click the item → DISPLAY → pick Slot 1. A rarity-colored

@@ -131,16 +131,6 @@ local function collectSlots(root)
 	return slots
 end
 
-local function setWarehouseSign(root, text)
-	local sign = root:FindFirstChild("Sign")
-	local label = sign and sign:FindFirstChild("TextLabel", true)
-	if label and label:IsA("TextLabel") then
-		pcall(function()
-			label.Text = text
-		end)
-	end
-end
-
 function WarehouseService.Init(deps)
 	MapHandles = deps.MapHandles
 
@@ -194,7 +184,8 @@ function WarehouseService.BuildFor(player, plot)
 	end
 	clone.Parent = folder
 	restoreVisuals(clone)
-	setWarehouseSign(clone, player.Name .. "'s Warehouse")
+	-- Ownership is shown ONLY on the plot roadside billboard (PlotService);
+	-- warehouses carry no name signage (see ticket: rooftop sign removed).
 	local entry = {
 		root = clone,
 		slots = collectSlots(clone),
