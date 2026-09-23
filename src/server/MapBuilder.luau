@@ -260,6 +260,26 @@ function MapBuilder.GetHandles()
 		uh.FloorTop = floorTop
 		uh.BidCenter = uh.BidCenterPart.Position
 		uh.ReturnCFrame = uh.ReturnPoint.CFrame
+		-- Spatial sanity: markers must belong to their own unit. A stale
+		-- translation-script offset shows up here immediately (warn, not
+		-- fatal — the auction still runs on whatever is authored).
+		local function xzDistance(a, b)
+			local dx, dz = a.X - b.X, a.Z - b.Z
+			return math.sqrt(dx * dx + dz * dz)
+		end
+		do
+			local d = xzDistance(uh.UnitCenter, uh.BidCenterPart.Position)
+			if d > 50 then
+				warn(string.format("[SA] %s BidCenter is %.1f studs from unit center — map marker likely misplaced.",
+					uh.Unit.Name, d))
+			end
+			local rp = uh.ReturnPoint.Position
+			local dr = xzDistance(uh.UnitCenter, rp)
+			if dr > 50 then
+				warn(string.format("[SA] %s ReturnPoint is %.1f studs from unit center — map marker likely misplaced.",
+					uh.Unit.Name, dr))
+			end
+		end
 	end
 	-- Warehouse template (optional): cloned per player by WarehouseService.
 	-- Absence only disables warehouses/displays; the auction loop runs on.

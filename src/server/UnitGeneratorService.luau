@@ -14,11 +14,14 @@ local ItemUtils = require(Shared.ItemUtils)
 
 local UnitGeneratorService = {}
 
-local function rollQuality(rng)
-	local weights = GameConfig.UnitQuality.Weights
+local function rollQuality(rng, weightsOverride)
+	local weights = weightsOverride or GameConfig.UnitQuality.Weights
 	local total = 0
 	for _, name in ipairs(GameConfig.UnitQuality.Order) do
 		total += weights[name] or 0
+	end
+	if total <= 0 then
+		return "Average"
 	end
 	local roll = rng:NextNumber() * total
 	for _, name in ipairs(GameConfig.UnitQuality.Order) do
