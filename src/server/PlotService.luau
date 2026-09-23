@@ -1,17 +1,14 @@
 --!nonstrict
--- StorageAuction MVP — server-local warehouse plot assignment.
+-- StorageAuction MVP — manual warehouse plot claiming (session-local).
 --
--- Scalability model: plot ownership is SESSION-LOCAL. Only players inside
--- THIS server hold plots; nothing about Plot_01..N is ever persisted.
--- Persistent progression (inventory, displays later, stats) lives in the
--- data services, never here.
+-- Players start with NO plot. A plot is assigned only when its sign prompt
+-- is triggered ("Claim Plot", E). Claimed plots cannot be taken by others;
+-- leaving frees the plot, destroys the runtime warehouse, and re-enables
+-- claiming. Full servers never kick: claim attempts fail with a toast.
 --
--- Signing: occupied plots show "<Name>'s Warehouse", free plots AVAILABLE.
--- On release the runtime warehouse is destroyed, attributes cleared, and
--- the plot returns to the free pool. Full servers never kick: assignment
--- fails cleanly and auction gameplay continues.
+-- Scalability model: ownership is SESSION-LOCAL. Plot index/position is
+-- temporary per server; progression data lives in the data services.
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -19,17 +16,13 @@ local GameConfig = require(Shared.GameConfig)
 
 local PlotService = {}
 
-local MapHandles = nil
 local Remotes = nil
 local WarehouseService = nil
 
--- plots[index] = { model, origin (CFrame), originPos (Vector3),
---                  signLabel (TextLabel or nil), ownerUserId (number or nil) }
+-- plots[index] = { index, name, model, origin (CFrame), originPos (Vector3),
+--                  signLabel (TextLabel or nil), prompt (ProximityPrompt or nil),
+--                  ownerUserId (number or nil) }
 local plots = {}
-
--- "a<b" sorted pair key -> true. Session cache; failures are NOT cached so
--- a flaky lookup retries on the next join instead of locking sequential.
-local friendCache = {}
 
 local function notify(player, text)
 	if not Remotes then
@@ -49,91 +42,36 @@ local function setPlotSign(plot, text)
 	end
 end
 
--- Non-blocking-tolerant friend check: any failure means "not friends"
--- (caller falls back to plain sequential assignment).
-local function areFriends(aUserId, bUserId)
-	if aUserId == bUserId then
-		return true
+local function setPromptEnabled(plot, enabled)
+	if plot.prompt then
+		pcall(function()
+			plot.prompt.Enabled = enabled
+		end)
 	end
-	local lo, hi = math.min(aUserId, bUserId), math.max(aUserId, bUserId)
-	local key = lo .. ":" .. hi
-	if friendCache[key] ~= nil then
-		return friendCache[key]
-	end
-	local ok, result = pcall(function()
-		local pages = Players:GetFriendsAsync(aUserId)
-		local advanced = 0
-		while true do
-			for _, item in ipairs(pages:GetCurrentPage()) do
-				local id = tonumber(item.Id) or tonumber(item.id)
-				if id == bUserId then
-					return true
-				end
-			end
-			if pages.IsFinished or advanced >= 2 then
-				break
-			end
-			advanced += 1
-			pages:AdvanceToNextPageAsync()
-		end
-		return false
-	end)
-	if ok and result then
-		friendCache[key] = true
-		return true
-	end
-	return false
 end
 
-local function freePlots()
-	local free = {}
-	for i, plot in ipairs(plots) do
-		if plot.ownerUserId == nil then
-			table.insert(free, plot)
-		end
+local function ensureClaimPrompt(plot)
+	if plot.prompt then
+		return plot.prompt
 	end
-	return free
-end
-
--- Modular pick step (party-aware assignment can extend this later):
--- prefer the free plot nearest to friend-occupied plots, else lowest index.
--- NEVER moves an already-assigned player.
-local function pickPlot(player, free)
-	if #free == 0 then
+	local board = plot.model:FindFirstChild("Board", true)
+	if not (board and board:IsA("BasePart")) then
 		return nil
 	end
-	if #free == 1 then
-		return free[1]
-	end
-	local friendOrigins = {}
-	for _, plot in ipairs(plots) do
-		if plot.ownerUserId ~= nil and areFriends(player.UserId, plot.ownerUserId) then
-			table.insert(friendOrigins, plot.originPos)
-		end
-	end
-	if #friendOrigins == 0 then
-		return free[1] -- free is index-ordered: lowest plot number wins
-	end
-	local best, bestScore = free[1], nil
-	for _, plot in ipairs(free) do
-		local nearest = nil
-		for _, origin in ipairs(friendOrigins) do
-			local dx = plot.originPos.X - origin.X
-			local dz = plot.originPos.Z - origin.Z
-			local d2 = dx * dx + dz * dz
-			if nearest == nil or d2 < nearest then
-				nearest = d2
-			end
-		end
-		if bestScore == nil or nearest < bestScore then
-			best, bestScore = plot, nearest
-		end
-	end
-	return best
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "ClaimPrompt"
+	prompt.ObjectText = "Warehouse Plot"
+	prompt.ActionText = "Claim"
+	prompt.HoldDuration = 0.5
+	prompt.MaxActivationDistance = 12
+	prompt.RequiresLineOfSight = false
+	prompt.Enabled = true
+	prompt.Parent = board
+	plot.prompt = prompt
+	return prompt
 end
 
 function PlotService.Init(deps)
-	MapHandles = deps.MapHandles
 	Remotes = deps.Remotes
 	WarehouseService = deps.WarehouseService
 
@@ -163,23 +101,47 @@ function PlotService.Init(deps)
 				signLabel = label
 			end
 		end
-		plots[index] = {
+		local plot = {
 			index = index,
 			name = name,
 			model = model,
 			origin = if originPart and originPart:IsA("BasePart") then originPart.CFrame else nil,
 			originPos = if originPart and originPart:IsA("BasePart") then originPart.Position else model:GetPivot().Position,
 			signLabel = signLabel,
+			prompt = nil,
 			ownerUserId = nil,
 		}
-		if plots[index].origin == nil then
+		if plot.origin == nil then
 			warn("[SA] Plot " .. name .. " has no WarehouseOrigin part; using model pivot.")
-			plots[index].origin = model:GetPivot()
+			plot.origin = model:GetPivot()
 		end
-		setPlotSign(plots[index], "AVAILABLE")
+		-- Claim prompt: authored on the sign board, created if missing.
+		local board = model:FindFirstChild("Board", true)
+		if board and board:IsA("BasePart") then
+			local prompt = board:FindFirstChild("ClaimPrompt")
+			if not (prompt and prompt:IsA("ProximityPrompt")) then
+				prompt = nil
+			end
+			plot.prompt = prompt
+		end
+		ensureClaimPrompt(plot)
+		setPlotSign(plot, "AVAILABLE")
+		setPromptEnabled(plot, true)
+		plots[index] = plot
 	end
 	if #plots == 0 then
 		warn("[SA] WarehouseDistrict has no Plot_NN models; warehouse plots disabled.")
+		return
+	end
+	for _, plot in ipairs(plots) do
+		local captured = plot
+		if captured.prompt then
+			captured.prompt.Triggered:Connect(function(player)
+				PlotService.ClaimPlot(player, captured.index)
+			end)
+		else
+			warn("[SA] Plot " .. captured.name .. " has no claim prompt; it cannot be claimed.")
+		end
 	end
 end
 
@@ -207,28 +169,42 @@ function PlotService.GetPlotByIndex(index)
 	return plots[tonumber(index) or 0]
 end
 
-function PlotService.AssignPlot(player)
+-- Manual claim of ONE specific plot. Never picks a different plot, never
+-- steals, never moves placed players. One plot per player (session).
+function PlotService.ClaimPlot(player, index)
 	if not player then
 		return nil
 	end
-	local existing = PlotService.GetPlot(player)
-	if existing then
-		return existing
-	end
 	if #plots == 0 then
+		notify(player, "Warehouse plots are unavailable.")
 		return nil
 	end
-	local plot = pickPlot(player, freePlots())
+	local plot = plots[math.floor(tonumber(index) or 0)]
 	if not plot then
-		notify(player, "No warehouse plot available in this server.")
+		notify(player, "That plot does not exist.")
+		return nil
+	end
+	if plot.ownerUserId == player.UserId then
+		notify(player, "You already own " .. plot.name .. ".")
+		return plot
+	end
+	if plot.ownerUserId ~= nil then
+		notify(player, plot.name .. " is already claimed.")
+		return nil
+	end
+	local owned = PlotService.GetPlot(player)
+	if owned then
+		notify(player, "You already own " .. owned.name .. ".")
 		return nil
 	end
 	plot.ownerUserId = player.UserId
 	plot.model:SetAttribute("OwnerUserId", player.UserId)
 	setPlotSign(plot, player.Name .. "'s Warehouse")
+	setPromptEnabled(plot, false)
 	if WarehouseService then
 		WarehouseService.BuildFor(player, plot)
 	end
+	notify(player, plot.name .. " claimed!")
 	return plot
 end
 
@@ -244,6 +220,7 @@ function PlotService.ReleasePlot(player)
 		plot.ownerUserId = nil
 		plot.model:SetAttribute("OwnerUserId", nil)
 		setPlotSign(plot, "AVAILABLE")
+		setPromptEnabled(plot, true)
 	end
 end
 

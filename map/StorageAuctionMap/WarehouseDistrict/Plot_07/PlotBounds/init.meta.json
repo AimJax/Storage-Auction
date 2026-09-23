@@ -5,10 +5,10 @@
     "CanCollide": false,
     "CanQuery": false,
     "CanTouch": false,
-    "CFrame": [80, 5, -18, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "CFrame": [176, 6, -32, 1, 0, 0, 0, 1, 0, 0, 0, 1],
     "Color": [255, 200, 60],
     "Material": "Neon",
-    "Size": [22, 10, 22],
+    "Size": [34, 12, 30],
     "Transparency": 1
   }
 }

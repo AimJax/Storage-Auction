@@ -87,8 +87,8 @@ PlayerStatsService.Init({
 	Remotes = remotes,
 })
 
--- 6) Server-local warehouse plots + runtime warehouses. Plot assignment can
--- yield on friend lookups, so joins assign asynchronously (auctions unaffected).
+-- 6) Server-local warehouse plots + runtime warehouses. Plots are claimed
+-- manually via sign prompts (no auto-assignment); see PlotService.ClaimPlot.
 PlotService.Init({
 	MapHandles = mapHandles,
 	Remotes = remotes,
@@ -101,9 +101,8 @@ WarehouseService.Init({
 -- 7) Players.
 local function onPlayerAdded(player)
 	PlayerDataService.Load(player)
-	task.spawn(function()
-		PlotService.AssignPlot(player)
-	end)
+	-- NOTE: no auto plot assignment. Players claim a plot manually at its
+	-- sign ("Claim Plot", E). See PlotService.ClaimPlot.
 	-- Send initial snapshot shortly after spawn so UI populates.
 	task.delay(1, function()
 		if player.Parent then

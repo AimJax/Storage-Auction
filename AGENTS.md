@@ -61,8 +61,9 @@ place file, is hand-editable, and Rojo never touches Workspace (see
 - `DisplayService.luau` — per-player display assignments (server-validated)
   inside that player's runtime warehouse; rarity proxies parented to the
   warehouse root. Never allocates plots, never touches other players.
-- `PlotService.luau` — SESSION-LOCAL plot assignment (Plot_01..N, free/owned,
-  friend-nearby preference, exhaustion without kicks). Never persisted.
+- `PlotService.luau` — SESSION-LOCAL manual plot claims (Plot_01..N via sign
+  prompt E, one plot per player, no stealing, release on leave, exhaustion
+  without kicks). Never persisted, never auto-assigned.
 - `WarehouseService.luau` — runtime warehouse clones from the authored
   `WarehouseTemplate` at plot origins; per-player slots; destroy on release.
 - `PlayerStatsService.luau` — session stats: AuctionsWon, CollectionValue

@@ -2,7 +2,7 @@
   "className": "Part",
   "properties": {
     "Anchored": true,
-    "CFrame": [24, 3.6, 0.5, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "CFrame": [83, 3.6, 9, 1, 0, 0, 0, 1, 0, 0, 0, 1],
     "Color": [40, 40, 45],
     "Size": [5, 2, 0.4]
   }

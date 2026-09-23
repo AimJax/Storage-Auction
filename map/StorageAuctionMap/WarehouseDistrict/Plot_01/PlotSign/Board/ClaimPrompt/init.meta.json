@@ -1,0 +1,11 @@
+{
+  "className": "ProximityPrompt",
+  "properties": {
+    "ActionText": "Claim",
+    "Enabled": true,
+    "HoldDuration": 0.5,
+    "MaxActivationDistance": 12,
+    "ObjectText": "Warehouse Plot",
+    "RequiresLineOfSight": false
+  }
+}

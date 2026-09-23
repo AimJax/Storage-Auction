@@ -2,9 +2,9 @@
   "className": "Part",
   "properties": {
     "Anchored": true,
-    "CFrame": [0, 7.7, -120, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "CFrame": [0, 10.7, -120, 1, 0, 0, 0, 1, 0, 0, 0, 1],
     "Color": [80, 80, 85],
     "Material": "Metal",
-    "Size": [14, 1, 10]
+    "Size": [22, 1, 16]
   }
 }

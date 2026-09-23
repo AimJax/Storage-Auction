@@ -2,9 +2,9 @@
   "className": "Part",
   "properties": {
     "Anchored": true,
-    "CFrame": [32, 0, -18, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "CFrame": [96, 0, -32, 1, 0, 0, 0, 1, 0, 0, 0, 1],
     "Color": [120, 120, 125],
     "Material": "Concrete",
-    "Size": [20, 0.4, 18]
+    "Size": [30, 0.4, 26]
   }
 }

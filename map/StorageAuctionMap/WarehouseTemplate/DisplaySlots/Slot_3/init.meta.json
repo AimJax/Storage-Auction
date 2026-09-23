@@ -5,7 +5,7 @@
     "CanCollide": false,
     "CanQuery": false,
     "CanTouch": false,
-    "CFrame": [4, 0.3, -122, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "CFrame": [6, 0.3, -123, 1, 0, 0, 0, 1, 0, 0, 0, 1],
     "Color": [110, 95, 60],
     "Material": "SmoothPlastic",
     "Size": [3, 0.2, 3]
