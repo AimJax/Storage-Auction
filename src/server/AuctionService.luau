@@ -83,9 +83,12 @@ local function broadcast()
 	end
 	local ev = Remotes:FindFirstChild(GameConfig.RemoteNames.AuctionState)
 	if ev then
+		-- Safe fallbacks: a client snapshot field must never kill the loop.
+		-- (Genuine map misconfiguration still errors loudly at selection.)
+		local tier = CurrentTier or GameConfig.AuctionTiers.Budget
 		local center = U and U.BidCenter
 		local inspection = nil
-		if State == "Inspection" and CurrentUnit then
+		if State == "Inspection" and CurrentUnit and CurrentUnit.VisibleItems then
 			local clues = {}
 			for _, item in ipairs(CurrentUnit.VisibleItems) do
 				-- Safe fields only: never values, never hidden identities.
@@ -93,8 +96,8 @@ local function broadcast()
 			end
 			inspection = {
 				visibleCount = #CurrentUnit.VisibleItems,
-				hiddenCount = #CurrentUnit.HiddenItems,
-				totalItemCount = #CurrentUnit.AllItems,
+				hiddenCount = #(CurrentUnit.HiddenItems or {}),
+				totalItemCount = #(CurrentUnit.AllItems or CurrentUnit.VisibleItems),
 				clues = clues,
 			}
 		end
@@ -102,8 +105,8 @@ local function broadcast()
 			state = State,
 			timeLeft = math.floor(timeLeft() + 0.5),
 			tier = CurrentTierId,
-			tierName = CurrentTier.DisplayName,
-			startingBid = CurrentTier.StartingBid,
+			tierName = tier.DisplayName or "?",
+			startingBid = tier.StartingBid or 0,
 			currentBid = CurrentBid,
 			bidder = CurrentBidder,
 			bidderType = CurrentBidderType,
@@ -119,8 +122,12 @@ local function broadcast()
 end
 
 local function setState(next, duration)
+	local prev = State
 	State = next
 	StateEndsAt = now() + duration
+	if GameConfig.DebugAuction then
+		print(string.format("[SA] STATE %s -> %s tier=%s", tostring(prev), tostring(next), tostring(CurrentTierId)))
+	end
 	broadcast()
 end
 
@@ -172,18 +179,24 @@ local function resetForNextAuction()
 end
 
 -- Advance to the next tier in rotation and bind its physical unit.
--- Errors clearly if the map lacks a unit for the tier (fail fast, not weird).
+-- Tiers whose map unit is missing are SKIPPED (warned once per skip) so one
+-- bad unit can never freeze the rotation. Errors only when NO tier has a
+-- unit at all (total misconfiguration — caller retries safely).
 local function selectNextTierUnit()
 	local order = GameConfig.AuctionTierOrder
-	TierIndex = (TierIndex % #order) + 1
-	CurrentTierId = order[TierIndex]
-	CurrentTier = GameConfig.AuctionTiers[CurrentTierId] or GameConfig.AuctionTiers.Standard
-	local uh = MapHandles and MapHandles.Units and MapHandles.Units[CurrentTierId]
-	if not uh then
-		error("[SA] No physical unit for tier " .. tostring(CurrentTierId), 0)
+	for step = 1, #order do
+		TierIndex = (TierIndex % #order) + 1
+		local tierId = order[TierIndex]
+		local uh = MapHandles and MapHandles.Units and MapHandles.Units[tierId]
+		if uh then
+			CurrentTierId = tierId
+			CurrentTier = GameConfig.AuctionTiers[CurrentTierId] or GameConfig.AuctionTiers.Standard
+			U = uh
+			return uh
+		end
+		warn("[SA] Skipping tier with no physical unit: " .. tostring(tierId))
 	end
-	U = uh
-	return uh
+	error("[SA] No physical unit for ANY tier — check map TierId attributes.", 0)
 end
 
 -- Server-authoritative tier access. Returns nil when allowed, else a
@@ -390,12 +403,13 @@ end
 
 function AuctionService.GetSnapshot()
 	local center = U and U.BidCenter
+	local tier = CurrentTier or GameConfig.AuctionTiers.Budget
 	return {
 		state = State,
 		timeLeft = math.floor(timeLeft() + 0.5),
 		tier = CurrentTierId,
-		tierName = CurrentTier.DisplayName,
-		startingBid = CurrentTier.StartingBid,
+		tierName = tier.DisplayName or "?",
+		startingBid = tier.StartingBid or 0,
 		currentBid = CurrentBid,
 		bidder = CurrentBidder,
 		bidderType = CurrentBidderType,
@@ -460,6 +474,11 @@ end
 
 local function stateLoop()
 	while true do
+		-- Guarded iteration: ANY runtime error is logged with a traceback
+		-- and the loop recovers to idle Waiting instead of dying silently.
+		-- Every state (including Inspection) therefore always terminates,
+		-- advances, or retries — never freezes forever.
+		local ok, err = xpcall(function()
 		broadcast()
 		if State == "Waiting" then
 			if timeLeft() <= 0 then
@@ -581,6 +600,21 @@ local function stateLoop()
 		else
 			task.wait(0.5)
 		end
+		end, debug.traceback)
+		if not ok then
+			warn("[SA] Auction loop error:\n" .. tostring(err))
+			-- Recover (itself guarded) with a backoff so a persistent
+			-- failure warns periodically instead of tight-looping.
+			local ok2, err2 = xpcall(function()
+				resetForNextAuction()
+				State = "Waiting"
+				StateEndsAt = now() + GameConfig.WaitingDuration
+			end, debug.traceback)
+			if not ok2 then
+				warn("[SA] Auction recovery failed:\n" .. tostring(err2))
+			end
+			task.wait(2)
+		end
 	end
 end
 
@@ -594,6 +628,27 @@ function AuctionService.Init(deps)
 	PlayerStatsService = deps.PlayerStatsService
 	DisplayService = deps.DisplayService
 	DebtService = deps.DebtService
+
+	-- Startup validation: every rotation tier needs a physical unit. Missing
+	-- tiers are skipped at runtime (see selectNextTierUnit); absent entirely
+	-- the loop retries loudly instead of freezing silently.
+	if GameConfig.AuctionTierOrder then
+		for _, tierId in ipairs(GameConfig.AuctionTierOrder) do
+			local uh = MapHandles and MapHandles.Units and MapHandles.Units[tierId]
+			if not uh then
+				warn("[SA] No physical unit for tier " .. tostring(tierId) .. " — it will be skipped in rotation.")
+			else
+				local problems = {}
+				if not uh.Door then table.insert(problems, "Door") end
+				if not uh.Barrier then table.insert(problems, "Barrier") end
+				if not uh.BidCenter then table.insert(problems, "BidCenter") end
+				if not uh.Containers or next(uh.Containers) == nil then table.insert(problems, "Containers") end
+				if #problems > 0 then
+					warn("[SA] Unit for tier " .. tostring(tierId) .. " is missing: " .. table.concat(problems, ", "))
+				end
+			end
+		end
+	end
 
 	-- Wire RemoteFunctions.
 	local placeBid = Remotes:FindFirstChild(GameConfig.RemoteNames.PlaceBid)
