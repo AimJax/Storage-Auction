@@ -23,7 +23,7 @@ local GameConfig = {
 			MinWins = 0,
 			MinNetWorth = 0,
 			NPCPressureMult = 0.85,
-			QualityWeights = { Trash = 30, Low = 35, Average = 25, Good = 8, Premium = 2, Jackpot = 1 },
+			QualityWeights = { Trash = 29, Low = 35, Average = 25, Good = 8, Premium = 2, Jackpot = 1 },
 			JunkChanceMult = 1.5,
 			RarityLuckBonus = 0,
 			ValueScaleMult = { Min = 0.6, Max = 1.0 },

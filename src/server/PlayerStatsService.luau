@@ -72,6 +72,27 @@ function PlayerStatsService.GetWins(player)
 	return auctionsWon[player.UserId] or 0
 end
 
+-- Persistence support (PlayerDataService calls these; missing -> 0).
+-- Owned exclusively here; PlayerDataService never touches internals.
+function PlayerStatsService.GetPersistData(player)
+	return { AuctionsWon = PlayerStatsService.GetWins(player) }
+end
+
+function PlayerStatsService.LoadPersisted(player, data)
+	if not player then
+		return
+	end
+	local won = 0
+	if typeof(data) == "table" then
+		won = math.max(0, math.floor(tonumber(data.AuctionsWon) or 0))
+	end
+	if won > 0 then
+		auctionsWon[player.UserId] = won
+	else
+		auctionsWon[player.UserId] = nil
+	end
+end
+
 function PlayerStatsService.ClearPlayer(player)
 	if player then
 		auctionsWon[player.UserId] = nil

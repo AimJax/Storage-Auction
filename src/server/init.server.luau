@@ -69,7 +69,7 @@ DebtService.Init({
 	AuctionService = AuctionService,
 	Remotes = remotes,
 })
-PlayerDataService.Init(EconomyService, InventoryService, DebtService)
+PlayerDataService.Init(EconomyService, InventoryService, DebtService, PlayerStatsService)
 
 -- 3) Map.
 -- 3) Map: Studio-authored. Errors clearly if StorageAuctionMap is missing

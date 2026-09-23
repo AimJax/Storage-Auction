@@ -25,8 +25,10 @@ local Remotes = nil
 
 -- [UserId] = { remaining, total, loanId }
 local debts = {}
--- [UserId] = os.clock() of last recovery grant (abuse cooldown).
-local recoveryAt = {}
+-- [UserId] = unix timestamp (os.time) when recovery becomes available again.
+-- PERSISTED (never cleared on leave) so rejoining cannot bypass the cooldown.
+-- Session-only os.clock() timing is deliberately NOT used here.
+local recoveryAvailableAt = {}
 
 function DebtService.Init(deps)
 	EconomyService = deps.EconomyService
@@ -203,15 +205,16 @@ function DebtService.ClaimRecovery(player)
 	if DebtService.NetWorth(player) >= GameConfig.RecoveryGrant then
 		return false, "Sell something from your Bag first."
 	end
-	local last = recoveryAt[player.UserId] or -1e9
-	if os.clock() - last < GameConfig.RecoveryCooldown then
-		return false, "Recovery is recharging. Come back later."
+	local last = recoveryAvailableAt[player.UserId] or 0
+	local nowUnix = os.time()
+	if nowUnix < last then
+		return false, string.format("Recovery available again in %ds.", last - nowUnix)
 	end
 	local grant = GameConfig.RecoveryGrant - cash
 	if grant <= 0 then
 		return false, "Recovery is only for broke players."
 	end
-	recoveryAt[player.UserId] = os.clock()
+	recoveryAvailableAt[player.UserId] = nowUnix + GameConfig.RecoveryCooldown
 	EconomyService.AddCash(player, grant)
 	if GameConfig.DebugAuction then
 		print(string.format("[SA] Recovery grant user=%d amount=%d", player.UserId, grant))
@@ -223,10 +226,14 @@ end
 -- Persistence support (PlayerDataService calls these; missing fields -> 0).
 function DebtService.GetPersistData(player)
 	local d = debts[player.UserId]
+	local out
 	if not d then
-		return { DebtRemaining = 0, DebtTotal = 0, LoanId = "" }
+		out = { DebtRemaining = 0, DebtTotal = 0, LoanId = "" }
+	else
+		out = { DebtRemaining = d.remaining, DebtTotal = d.total, LoanId = d.loanId }
 	end
-	return { DebtRemaining = d.remaining, DebtTotal = d.total, LoanId = d.loanId }
+	out.RecoveryAvailableAt = recoveryAvailableAt[player.UserId] or 0
+	return out
 end
 
 function DebtService.LoadPersisted(player, data)
@@ -241,6 +248,8 @@ function DebtService.LoadPersisted(player, data)
 			loanId = tostring(data.LoanId or ""),
 		}
 	end
+	-- Missing field (older saves) defaults to 0 = immediately eligible.
+	recoveryAvailableAt[player.UserId] = math.max(0, math.floor(tonumber(data.RecoveryAvailableAt) or 0))
 end
 
 function DebtService.ClearPlayer(player)
@@ -248,7 +257,9 @@ function DebtService.ClearPlayer(player)
 		return
 	end
 	debts[player.UserId] = nil
-	recoveryAt[player.UserId] = nil
+	-- NOTE: recoveryAvailableAt is intentionally NOT cleared here. It is
+	-- persisted session state; Save (which runs before clears) reads it,
+	-- and clearing it would reopen the rejoin exploit.
 end
 
 return DebtService
