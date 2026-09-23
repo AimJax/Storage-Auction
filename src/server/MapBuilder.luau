@@ -24,10 +24,9 @@
 --         Mat (Part, optional)
 --         Seats (Model, optional) → Chair_i (Model) → Seat + Post + Back
 --     → SpawnLocation (optional — engine-owned; warned if absent)
---     → PlayerShowroom (Model, optional — collection displays; warned if
---         absent, display features degrade gracefully instead of failing)
---         Floor, BackWall, LeftWall, RightWall, Sign (decor, optional)
---         DisplaySlots (Model) → Slot_1..N (Parts, ordered by name number)
+--     → WarehouseTemplate (Model, optional — cloned per player at runtime;
+--         warned if absent, warehouses/displays degrade gracefully)
+--     → WarehouseDistrict (Model, discovered by PlotService itself)
 --
 -- Rojo does NOT manage Workspace (see default.project.json), so manual
 -- Studio edits to this hierarchy are never overwritten by code sync.
@@ -160,34 +159,14 @@ function MapBuilder.GetHandles()
 	if unitBounds and not unitBounds:IsA("BasePart") then
 		unitBounds = nil
 	end
-	-- Showroom (optional): discover Slot_N parts, contiguous from Slot_1.
-	-- Missing showroom only disables displays; the auction loop is unaffected.
-	-- The PlayerShowroom MODEL itself is also exposed so DisplayService can
-	-- clone per-player runtime showrooms from it (template stays pristine).
-	local showroomSlots = nil
-	local showroom = map:FindFirstChild("PlayerShowroom")
-	if showroom and not showroom:IsA("Model") then
-		showroom = nil
+	-- Warehouse template (optional): cloned per player by WarehouseService.
+	-- Absence only disables warehouses/displays; the auction loop runs on.
+	local warehouseTemplate = map:FindFirstChild("WarehouseTemplate")
+	if warehouseTemplate and not warehouseTemplate:IsA("Model") then
+		warehouseTemplate = nil
 	end
-	if showroom then
-		local slotsFolder = showroom:FindFirstChild("DisplaySlots")
-		if slotsFolder then
-			local ordered = {}
-			for i = 1, 64 do
-				local slot = slotsFolder:FindFirstChild("Slot_" .. i)
-				if slot and slot:IsA("BasePart") then
-					table.insert(ordered, slot)
-				else
-					break -- contiguous from Slot_1; stop at first gap
-				end
-			end
-			if #ordered > 0 then
-				showroomSlots = ordered
-			end
-		end
-	end
-	if showroomSlots == nil then
-		warn("[SA] No PlayerShowroom/DisplaySlots found; display features disabled until the map provides them.")
+	if warehouseTemplate == nil then
+		warn("[SA] No WarehouseTemplate in map; warehouses/displays disabled until the map provides one.")
 	end
 	if map:FindFirstChild("SpawnLocation") == nil
 		and workspace:FindFirstChildOfClass("SpawnLocation") == nil
@@ -235,8 +214,7 @@ function MapBuilder.GetHandles()
 		FloorTop = floorTop,
 		BidCenter = bidCenter.Position,
 		ReturnCFrame = returnPoint.CFrame,
-		ShowroomSlots = showroomSlots, -- ordered Slot_1..N parts, or nil
-		ShowroomTemplate = showroom, -- PlayerShowroom Model, or nil
+		WarehouseTemplate = warehouseTemplate, -- Model or nil
 	}
 end
 

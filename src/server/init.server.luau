@@ -16,6 +16,8 @@ local MapBuilder = require(script.MapBuilder)
 local PlayerDataService = require(script.PlayerDataService)
 local DisplayService = require(script.DisplayService)
 local PlayerStatsService = require(script.PlayerStatsService)
+local PlotService = require(script.PlotService)
+local WarehouseService = require(script.WarehouseService)
 
 -- 1) Remotes (created at runtime so Studio needs zero manual setup).
 local function ensureRemotes()
@@ -77,7 +79,7 @@ AuctionService.Init({
 -- 5) Showroom displays + progression stats (depend on services above).
 DisplayService.Init({
 	InventoryService = InventoryService,
-	MapHandles = mapHandles,
+	WarehouseService = WarehouseService,
 	Remotes = remotes,
 })
 PlayerStatsService.Init({
@@ -85,9 +87,23 @@ PlayerStatsService.Init({
 	Remotes = remotes,
 })
 
--- 5) Players.
+-- 6) Server-local warehouse plots + runtime warehouses. Plot assignment can
+-- yield on friend lookups, so joins assign asynchronously (auctions unaffected).
+PlotService.Init({
+	MapHandles = mapHandles,
+	Remotes = remotes,
+	WarehouseService = WarehouseService,
+})
+WarehouseService.Init({
+	MapHandles = mapHandles,
+})
+
+-- 7) Players.
 local function onPlayerAdded(player)
 	PlayerDataService.Load(player)
+	task.spawn(function()
+		PlotService.AssignPlot(player)
+	end)
 	-- Send initial snapshot shortly after spawn so UI populates.
 	task.delay(1, function()
 		if player.Parent then
@@ -114,6 +130,7 @@ end
 
 local function onPlayerRemoving(player)
 	PlayerDataService.Save(player)
+	PlotService.ReleasePlot(player)
 	AuctionService.ClearPlayer(player)
 	DisplayService.ClearPlayer(player)
 	PlayerStatsService.ClearPlayer(player)

@@ -1,0 +1,10 @@
+{
+  "className": "Part",
+  "properties": {
+    "Anchored": true,
+    "CFrame": [0, 3.7, -115.5, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "Color": [110, 120, 140],
+    "Material": "CorrodedMetal",
+    "Size": [14, 7, 1]
+  }
+}

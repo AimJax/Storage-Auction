@@ -188,16 +188,20 @@ Multi-client: Studio **Test** tab → **Clients and Servers** → 2 Players →
 
 ## Showroom / collection test (solo)
 9. KEEP an item → Bag count rises; Bag panel shows
-   `Collection $X · Won N` and premium LOCKED status.
+   `Collection $X · Won N` and premium LOCKED status. Joining also assigns
+   you a warehouse plot east of the unit (plot sign shows your name).
 10. Open Bag → click the item → DISPLAY → pick Slot 1. A rarity-colored
-    proxy with name/rarity/value appears on the showroom slot (showroom is
-    east of the unit at x≈38, outside the bid radius — walk there).
+    proxy with name/rarity/value appears on YOUR warehouse slot.
 11. DISPLAY the same item into Slot 2 → Slot 1 clears, Slot 2 shows it.
     One item never occupies two slots.
 12. Slot picker → REMOVE DISPLAY → proxy disappears, item stays in Bag.
 13. DISPLAY again, then SELL it from the Bag → proxy auto-clears, Cash rises.
 14. Win auctions / grow collection → Bag stats update; at 5 wins or $5,000
     collection the premium line switches to UNLOCKED (teaser only).
+15. 2-player Test: both players get different plots and warehouses; A
+    displaying in Slot 1 never disturbs B's Slot 1; A selling clears only
+    A's proxy; leaving destroys only the leaver's warehouse and frees the
+    plot (sign back to AVAILABLE).
 
 ## Known limitations (M1)
 - Rummaging is physically open: anyone may walk in, but only the winner can

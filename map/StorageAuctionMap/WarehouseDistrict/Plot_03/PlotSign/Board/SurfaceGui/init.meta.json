@@ -1,0 +1,7 @@
+﻿{
+  "className": "SurfaceGui",
+  "properties": {
+    "CanvasSize": [500, 200],
+    "Face": "Back"
+  }
+}
