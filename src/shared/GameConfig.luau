@@ -71,11 +71,23 @@ local GameConfig = {
 	-- InterestChance: per-auction roll to seriously contest (else a rare
 	-- cheap poke at most). InterestBonusRare/PerHidden: lightweight biases.
 	NPCs = {
-		{ Name = "Dealer Dan",    Archetype = "Conservative", Budget = 800,  Aggression = 0.3, RiskTolerance = 0.55, Skill = 0.70, OverpayChance = 0.05, BidChance = 0.60, MaxDelay = 3.4, InterestChance = 0.55 },
-		{ Name = "Collector Kate",Archetype = "Expert",       Budget = 1500, Aggression = 0.5, RiskTolerance = 0.70, Skill = 0.90, OverpayChance = 0.08, BidChance = 0.55, MaxDelay = 3.8, InterestChance = 0.50, InterestBonusRare = 0.25 },
-		{ Name = "Rico Flipper",  Archetype = "Aggressive",   Budget = 1200, Aggression = 0.9, RiskTolerance = 0.85, Skill = 0.55, OverpayChance = 0.35, BidChance = 0.75, MaxDelay = 2.4, InterestChance = 0.65, InterestBonusPerHidden = 0.10 },
-		{ Name = "Lucky Lou",     Archetype = "Clueless",     Budget = 700,  Aggression = 0.6, RiskTolerance = 1.00, Skill = 0.25, OverpayChance = 0.40, BidChance = 0.45, MaxDelay = 4.6, InterestChance = 0.40 },
+		{ Name = "Dealer Dan",    Archetype = "Conservative", Budget = 500,  Aggression = 0.3, RiskTolerance = 0.50, Skill = 0.70, OverpayChance = 0.05, BidChance = 0.60, MaxDelay = 3.4, InterestChance = 0.55 },
+		{ Name = "Collector Kate",Archetype = "Expert",       Budget = 900,  Aggression = 0.5, RiskTolerance = 0.60, Skill = 0.90, OverpayChance = 0.08, BidChance = 0.55, MaxDelay = 3.8, InterestChance = 0.50, InterestBonusRare = 0.25 },
+		{ Name = "Rico Flipper",  Archetype = "Aggressive",   Budget = 700,  Aggression = 0.9, RiskTolerance = 0.70, Skill = 0.55, OverpayChance = 0.35, BidChance = 0.75, MaxDelay = 2.4, InterestChance = 0.65, InterestBonusPerHidden = 0.10 },
+		{ Name = "Lucky Lou",     Archetype = "Clueless",     Budget = 400,  Aggression = 0.6, RiskTolerance = 0.60, Skill = 0.25, OverpayChance = 0.40, BidChance = 0.45, MaxDelay = 4.6, InterestChance = 0.40 },
 	},
+
+	-- NPC filler scaling: pressure drops as real humans participate.
+	-- Index = min(activeHumanBidders, 3). Scales BidChance, effective MaxBid,
+	-- aggression and pacing. Humans drive PvP; NPCs fill empty servers.
+	NPCPressureByHumans = { [0] = 1.00, [1] = 0.65, [2] = 0.30, [3] = 0.10 },
+	-- Late-bid suppression: inside LateWindow with a human leading, NPC bid
+	-- chance is multiplied (PvP value when 2+ humans active). NPCs with zero
+	-- bids so far cannot enter at all inside the window. Human anti-snipe
+	-- is unaffected (separate mechanic, applies to every valid bid).
+	NPCLateWindow = 5,
+	NPCLateBidMult = 0.10,
+	NPCLateBidMultPvP = 0.03,
 
 	-- NPC participation rules (all centralized here).
 	MinActiveNPCs = 1,   -- promote random NPCs until at least this many contest

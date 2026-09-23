@@ -41,6 +41,17 @@ local ContainerItems = {} -- [containerId] = itemInstance (pre-generated, hidden
 local ContainerOpened = {} -- [containerId] = true once opened
 local BidExtensionsUsed = 0 -- anti-snipe cap counter, per auction
 local LastBidTime = -1000 -- os.clock of last accepted bid (NPC pacing)
+-- Active human bidders this auction: [UserId] = true on first accepted bid.
+-- Session-local, reset every auction. Drives NPC filler pressure (never PvP).
+local ActiveHumanBidders = {}
+
+local function ActiveHumanCount()
+	local n = 0
+	for _ in pairs(ActiveHumanBidders) do
+		n += 1
+	end
+	return n
+end
 
 -- Pending Sell/Keep decisions. [UserId] = itemInstance the player revealed
 -- but has not resolved yet. Server-owned: opening never grants ownership;
@@ -138,6 +149,7 @@ local function resetForNextAuction()
 	RummageGraceEndsAt = nil
 	BidExtensionsUsed = 0
 	LastBidTime = -1000
+	ActiveHumanBidders = {}
 	HiddenValue = 0
 	if MapHandles then
 		MapBuilder.SetDoorOpen(MapHandles, false)
@@ -195,6 +207,12 @@ function AuctionService.TryBid(playerOrNil, amount, isNPC, npcName)
 	CurrentBidderType = "Player"
 	CurrentBidderUserId = player.UserId
 	LastBidTime = now()
+	if not ActiveHumanBidders[player.UserId] then
+		ActiveHumanBidders[player.UserId] = true
+		if GameConfig.DebugAuction then
+			print(string.format("[SA] ActiveHumanBidders=%d", ActiveHumanCount()))
+		end
+	end
 	applyAntiSnipe()
 	broadcast()
 	return true, "Bid accepted."
@@ -405,9 +423,11 @@ local function stateLoop()
 			-- no matter who placed it (human or NPC).
 			local t = now()
 			local function npcTryBid(name, amount)
-				AuctionService.TryBid(nil, amount, true, name)
+				local ok, _msg = AuctionService.TryBid(nil, amount, true, name)
+				return ok
 			end
-			NPCBidderService.Tick(NpcBidders, t, CurrentBid, CurrentBidder, LastBidTime, npcTryBid)
+			NPCBidderService.Tick(NpcBidders, t, CurrentBid, CurrentBidder,
+				LastBidTime, ActiveHumanCount(), timeLeft(), CurrentBidderType == "Player", npcTryBid)
 			if timeLeft() <= 0 then
 				finishBidding()
 			end

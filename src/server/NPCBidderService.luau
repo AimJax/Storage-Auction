@@ -92,6 +92,8 @@ function NPCBidderService.CreateBidders(npcDefs, visibleItems, hiddenCount)
 			BidChance = tonumber(def.BidChance) or 0.5,
 			MaxDelay = tonumber(def.MaxDelay) or 3.0,
 			CooldownUntil = 0,
+			BidsPlaced = 0, -- history: blocks late surprise entrants
+			_lateBlockedLogged = false,
 		})
 	end
 
@@ -147,31 +149,54 @@ end
 -- Called each bidding tick against the GLOBAL current bid. tryBid(name, amount)
 -- performs the bid through the same server path as human bids. lastBidAt gates
 -- a reaction pause; only one NPC tends to answer per tick (dampened chains).
-function NPCBidderService.Tick(bidders, now, currentBid, currentBidderName, lastBidAt, tryBid)
+-- activeHumans scales all pressure down (PvP takes over); timeLeft drives
+-- late-bid suppression; highestIsHuman gates it. Returns updated currentBid.
+function NPCBidderService.Tick(bidders, now, currentBid, currentBidderName, lastBidAt, activeHumans, timeLeft, highestIsHuman, tryBid)
 	if now - (lastBidAt or -1000) < GameConfig.NPCReactionPause then
 		return currentBid -- let the last bid breathe; no instant chains
 	end
+	activeHumans = math.max(0, math.floor(tonumber(activeHumans) or 0))
+	local pressure = GameConfig.NPCPressureByHumans[math.min(activeHumans, 3)] or 0.1
+	highestIsHuman = highestIsHuman == true
 	local answeredThisTick = false
 	for _, b in ipairs(bidders) do
 		if b.Name == currentBidderName then
 			continue -- never outbid yourself; wait to be outbid
 		end
-		if now >= b.CooldownUntil and currentBid < b.MaxBid then
-			local chance = b.BidChance
+		-- No late joining: zero prior bids + final seconds = stay out.
+		if b.BidsPlaced == 0 and timeLeft <= GameConfig.NPCLateWindow then
+			if GameConfig.DebugAuction and not b._lateBlockedLogged then
+				b._lateBlockedLogged = true
+				print(string.format("[SA] NPC %s lateBidSuppressed=true (no prior bids)", b.Name))
+			end
+			continue
+		end
+		local effectiveMax = math.floor(b.MaxBid * (0.45 + 0.55 * pressure) + 0.5)
+		if now >= b.CooldownUntil and currentBid < effectiveMax then
+			local chance = b.BidChance * pressure
+			if timeLeft <= GameConfig.NPCLateWindow and highestIsHuman then
+				chance *= if activeHumans >= 2 then GameConfig.NPCLateBidMultPvP else GameConfig.NPCLateBidMult
+			end
 			if answeredThisTick then
 				chance *= 0.3 -- dampen multi-NPC pile-ons within one tick
 			end
 			if rng:NextNumber() < chance then
 				local inc = ItemUtils.BidIncrementFor(currentBid)
-				local step = if rng:NextNumber() < b.Aggression then 2 else 1
-				local amount = math.min(currentBid + inc * step, b.MaxBid)
-				if amount > currentBid then
-					tryBid(b.Name, amount)
-					currentBid = amount
-					answeredThisTick = true
+				local step = if rng:NextNumber() < b.Aggression * pressure then 2 else 1
+				local amount = math.min(currentBid + inc * step, effectiveMax)
+				if amount >= currentBid + inc then
+					if tryBid(b.Name, amount) then
+						b.BidsPlaced += 1
+						currentBid = amount
+						answeredThisTick = true
+						if GameConfig.DebugAuction then
+							print(string.format("[SA] NPC %s bid $%d (pressure=%.2f, activeHumans=%d)",
+								b.Name, amount, pressure, activeHumans))
+						end
+					end
 				end
 			end
-			local pace = 1.25 - b.Aggression * 0.5
+			local pace = (1.25 - b.Aggression * 0.5) * (2 - pressure)
 			b.CooldownUntil = now + rng:NextNumber(0.5, b.MaxDelay) * pace
 		end
 	end
