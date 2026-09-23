@@ -5,7 +5,7 @@
     "Attributes": {
       "ContainerId": "box_3"
     },
-    "CFrame": [6, 2.2, 42, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "CFrame": [69.0213, 2.2, -14.75, 0, 0, -1, 0, 1, 0, 1, 0, 0],
     "Color": [140, 110, 160],
     "Material": "WoodPlanks",
     "Size": [4, 4, 4]

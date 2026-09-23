@@ -2,9 +2,9 @@
   "className": "Part",
   "properties": {
     "Anchored": true,
-    "CFrame": [380, 0, -20, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "CFrame": [330, -0.05, -20, 1, 0, 0, 0, 1, 0, 0, 0, 1],
     "Color": [50, 50, 55],
     "Material": "Cobblestone",
-    "Size": [400, 0.2, 32]
+    "Size": [500, 0.25, 40]
   }
 }

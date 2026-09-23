@@ -4,7 +4,7 @@
     "Anchored": true,
     "CanQuery": false,
     "CanTouch": false,
-    "CFrame": [0, 0.2, 21, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "CFrame": [90.0213, 0.2, -20.75, 0, 0, -1, 0, 1, 0, 1, 0, 0],
     "Color": [255, 200, 60],
     "Material": "Neon",
     "Size": [1, 1, 1]
