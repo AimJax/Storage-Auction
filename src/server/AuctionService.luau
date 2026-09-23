@@ -40,6 +40,7 @@ local CurrentUnit = nil -- full UnitGeneratorService unit (server only)
 local ContainerItems = {} -- [containerId] = itemInstance (pre-generated, hidden)
 local ContainerOpened = {} -- [containerId] = true once opened
 local BidExtensionsUsed = 0 -- anti-snipe cap counter, per auction
+local LastBidTime = -1000 -- os.clock of last accepted bid (NPC pacing)
 
 -- Pending Sell/Keep decisions. [UserId] = itemInstance the player revealed
 -- but has not resolved yet. Server-owned: opening never grants ownership;
@@ -136,6 +137,7 @@ local function resetForNextAuction()
 	PendingByUser = {}
 	RummageGraceEndsAt = nil
 	BidExtensionsUsed = 0
+	LastBidTime = -1000
 	HiddenValue = 0
 	if MapHandles then
 		MapBuilder.SetDoorOpen(MapHandles, false)
@@ -170,6 +172,7 @@ function AuctionService.TryBid(playerOrNil, amount, isNPC, npcName)
 		CurrentBidder = npcName or "NPC"
 		CurrentBidderType = "NPC"
 		CurrentBidderUserId = nil
+		LastBidTime = now()
 		applyAntiSnipe()
 		broadcast()
 		return true, "NPC bid accepted."
@@ -191,6 +194,7 @@ function AuctionService.TryBid(playerOrNil, amount, isNPC, npcName)
 	CurrentBidder = player.Name
 	CurrentBidderType = "Player"
 	CurrentBidderUserId = player.UserId
+	LastBidTime = now()
 	applyAntiSnipe()
 	broadcast()
 	return true, "Bid accepted."
@@ -376,7 +380,10 @@ local function stateLoop()
 			if timeLeft() <= 0 then
 				resetForNextAuction()
 				pregenerateContents()
-				NpcBidders = NPCBidderService.CreateBidders(GameConfig.NPCs, HiddenValue)
+				NpcBidders = NPCBidderService.CreateBidders(
+					GameConfig.NPCs,
+					if CurrentUnit then CurrentUnit.VisibleItems else {},
+					if CurrentUnit then #CurrentUnit.HiddenItems else 0)
 				-- Bidding starts at BidStartPrice; first valid bid must exceed it.
 				CurrentBid = GameConfig.BidStartPrice - ItemUtils.BidIncrementFor(GameConfig.BidStartPrice)
 				if CurrentBid < 0 then
@@ -400,7 +407,7 @@ local function stateLoop()
 			local function npcTryBid(name, amount)
 				AuctionService.TryBid(nil, amount, true, name)
 			end
-			NPCBidderService.Tick(NpcBidders, t, CurrentBid, CurrentBidder, npcTryBid)
+			NPCBidderService.Tick(NpcBidders, t, CurrentBid, CurrentBidder, LastBidTime, npcTryBid)
 			if timeLeft() <= 0 then
 				finishBidding()
 			end

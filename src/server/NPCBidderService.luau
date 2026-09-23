@@ -1,10 +1,12 @@
 --!nonstrict
 -- StorageAuction V2 — config-driven NPC bidder personalities.
 --
--- Each NPC forms its OWN noisy estimate of the unit's true value and derives
--- a personal MaximumBid from it. NPCs react to the single GLOBAL CurrentBid
--- no matter who placed it (human or NPC) and never outbid themselves.
--- No LLMs, no learning — deterministic archetype math only.
+-- NPCs estimate like humans: from VISIBLE clues (appraised with skill-based
+-- error) plus a GUESS per hidden box (config average × personality × noise).
+-- TrueTotalValue is NEVER an input. Each NPC also rolls per-auction INTEREST
+-- (else sits out or cheap-pokes only), and only up to MaxActiveNPCs contest
+-- seriously. NPCs react to the single GLOBAL CurrentBid (human or NPC) with
+-- a reaction pause so bidding feels human, never machine-gun chains.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -16,15 +18,49 @@ local NPCBidderService = {}
 
 local rng = Random.new()
 
--- npcDefs: GameConfig.NPCs. trueValue: server's hidden unit total.
--- Returns per-auction bidder states with EstimatedValue + MaxBid.
-function NPCBidderService.CreateBidders(npcDefs, trueValue)
+local RARE_PLUS = { Rare = true, Epic = true, Legendary = true, Mythic = true }
+
+local function hasRarePlus(visibleItems)
+	for _, item in ipairs(visibleItems) do
+		if RARE_PLUS[item.Rarity] then
+			return true
+		end
+	end
+	return false
+end
+
+-- npcDefs: GameConfig.NPCs. visibleItems: server unit's real visible loot
+-- (FinalValue used internally as appraisal proxy ONLY). hiddenCount: boxes
+-- still sealed. Returns per-auction bidder states.
+function NPCBidderService.CreateBidders(npcDefs, visibleItems, hiddenCount)
+	visibleItems = visibleItems or {}
+	hiddenCount = hiddenCount or 0
+	local rareVisible = hasRarePlus(visibleItems)
 	local bidders = {}
+
 	for _, def in ipairs(npcDefs) do
 		local skill = math.clamp(tonumber(def.Skill) or 0.5, 0, 1)
-		local noise = (1 - skill) * 0.7
-		local estimated = math.max(0, math.floor(trueValue * (1 + (rng:NextNumber() * 2 - 1) * noise) + 0.5))
 		local risk = tonumber(def.RiskTolerance) or 0.7
+
+		-- 1) Appraise what everyone can see, with skill-based error.
+		local visibleTrue = 0
+		for _, item in ipairs(visibleItems) do
+			visibleTrue += tonumber(item.FinalValue) or 0
+		end
+		local visibleEstimate = math.max(0, math.floor(
+			visibleTrue * (1 + (rng:NextNumber() * 2 - 1) * (1 - skill) * 0.5) + 0.5))
+
+		-- 2) Guess the sealed boxes: config average × personality × noise.
+		-- Never touches actual hidden values.
+		local spread = 0.25 + (1 - skill) * 0.9
+		local hiddenGuess = 0
+		if hiddenCount > 0 then
+			local perBox = GameConfig.AvgHiddenItemValue * (0.4 + risk * 0.8)
+			hiddenGuess = math.max(0, math.floor(
+				hiddenCount * perBox * rng:NextNumber(math.max(0.05, 1 - spread), 1 + spread) + 0.5))
+		end
+
+		local estimated = visibleEstimate + hiddenGuess
 		local maxBid = math.floor(estimated * risk + 0.5)
 		if rng:NextNumber() < (tonumber(def.OverpayChance) or 0) then
 			maxBid = math.floor(maxBid * 1.18 + 0.5)
@@ -33,9 +69,22 @@ function NPCBidderService.CreateBidders(npcDefs, trueValue)
 		if maxBid < 0 then
 			maxBid = 0
 		end
+
+		-- 3) Interest roll (with light personality biases).
+		local chance = tonumber(def.InterestChance) or 0.5
+		if rareVisible then
+			chance += tonumber(def.InterestBonusRare) or 0
+		end
+		chance += math.min((tonumber(def.InterestBonusPerHidden) or 0) * hiddenCount, 0.3)
+		chance = math.clamp(chance, 0, 0.95)
+		local interested = rng:NextNumber() < chance
+
 		table.insert(bidders, {
 			Name = def.Name,
 			Archetype = def.Archetype or "Average",
+			Interested = interested,
+			VisibleEstimate = visibleEstimate,
+			HiddenGuess = hiddenGuess,
 			EstimatedValue = estimated,
 			MaxBid = maxBid,
 			Budget = tonumber(def.Budget) or maxBid,
@@ -44,30 +93,82 @@ function NPCBidderService.CreateBidders(npcDefs, trueValue)
 			MaxDelay = tonumber(def.MaxDelay) or 3.0,
 			CooldownUntil = 0,
 		})
+	end
+
+	-- 4) Participation cap: demote extras (lowest aggression first), promote
+	-- to minimum. Demoted/uninterested NPCs get a rare cheap poke at most —
+	-- they can never suddenly join at $1,000.
+	local function isSerious(b)
+		return b.Interested
+	end
+	local serious = {}
+	for _, b in ipairs(bidders) do
+		if isSerious(b) then
+			table.insert(serious, b)
+		end
+	end
+	if #serious > GameConfig.MaxActiveNPCs then
+		table.sort(serious, function(a, b) return a.Aggression > b.Aggression end)
+		for i = GameConfig.MaxActiveNPCs + 1, #serious do
+			serious[i].Interested = false
+		end
+	elseif #serious < GameConfig.MinActiveNPCs then
+		local idle = {}
+		for _, b in ipairs(bidders) do
+			if not isSerious(b) then
+				table.insert(idle, b)
+			end
+		end
+		while #serious < GameConfig.MinActiveNPCs and #idle > 0 do
+			local pick = table.remove(idle, rng:NextInteger(1, #idle))
+			pick.Interested = true
+			table.insert(serious, pick)
+		end
+	end
+	for _, b in ipairs(bidders) do
+		if not b.Interested then
+			b.MaxBid = math.min(b.MaxBid, GameConfig.CasualPokeMaxBid)
+			b.BidChance = math.min(b.BidChance, GameConfig.CasualPokeChance)
+			b.MaxDelay = math.max(b.MaxDelay, 5.0)
+		end
 		if GameConfig.DebugAuction then
-			print(string.format("[SA] NPC %s (%s) estimated=%d maxBid=%d budget=%d (true=%d)",
-				def.Name, bidders[#bidders].Archetype, estimated, maxBid,
-				bidders[#bidders].Budget, trueValue))
+			if b.Interested then
+				print(string.format("[SA] NPC %s interested=true", b.Name))
+				print(string.format("[SA] visibleEstimate=%d hiddenGuess=%d estimate=%d maxBid=%d",
+					b.VisibleEstimate, b.HiddenGuess, b.EstimatedValue, b.MaxBid))
+			else
+				print(string.format("[SA] NPC %s interested=false", b.Name))
+			end
 		end
 	end
 	return bidders
 end
 
 -- Called each bidding tick against the GLOBAL current bid. tryBid(name, amount)
--- performs the bid through the same server path as human bids.
-function NPCBidderService.Tick(bidders, now, currentBid, currentBidderName, tryBid)
+-- performs the bid through the same server path as human bids. lastBidAt gates
+-- a reaction pause; only one NPC tends to answer per tick (dampened chains).
+function NPCBidderService.Tick(bidders, now, currentBid, currentBidderName, lastBidAt, tryBid)
+	if now - (lastBidAt or -1000) < GameConfig.NPCReactionPause then
+		return currentBid -- let the last bid breathe; no instant chains
+	end
+	local answeredThisTick = false
 	for _, b in ipairs(bidders) do
 		if b.Name == currentBidderName then
 			continue -- never outbid yourself; wait to be outbid
 		end
 		if now >= b.CooldownUntil and currentBid < b.MaxBid then
-			if rng:NextNumber() < b.BidChance then
+			local chance = b.BidChance
+			if answeredThisTick then
+				chance *= 0.3 -- dampen multi-NPC pile-ons within one tick
+			end
+			if rng:NextNumber() < chance then
 				local inc = ItemUtils.BidIncrementFor(currentBid)
 				local step = if rng:NextNumber() < b.Aggression then 2 else 1
 				local amount = math.min(currentBid + inc * step, b.MaxBid)
 				if amount > currentBid then
 					tryBid(b.Name, amount)
 					currentBid = amount
+					answeredThisTick = true
 				end
 			end
 			local pace = 1.25 - b.Aggression * 0.5

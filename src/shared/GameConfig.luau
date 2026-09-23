@@ -64,16 +64,26 @@ local GameConfig = {
 	MaxItemValue = 6000,
 
 	-- NPC bidder personalities (config-driven, deterministic).
-	-- Skill 0..1: 1 = near-perfect value estimate, 0 = wild guess.
-	-- RiskTolerance: fraction of estimated value used as max bid baseline.
+	-- Skill 0..1: appraisal/estimate accuracy (1 = sharp, 0 = wild guess).
+	-- RiskTolerance: fraction of estimated value used as max-bid baseline.
 	-- Aggression: bigger/faster counter-bids. OverpayChance: chance per
 	-- auction to stretch ~18% past the risk-based max. Budget: hard cap.
+	-- InterestChance: per-auction roll to seriously contest (else a rare
+	-- cheap poke at most). InterestBonusRare/PerHidden: lightweight biases.
 	NPCs = {
-		{ Name = "Dealer Dan",    Archetype = "Conservative", Budget = 1500, Aggression = 0.3, RiskTolerance = 0.55, Skill = 0.70, OverpayChance = 0.05, BidChance = 0.60, MaxDelay = 3.2 },
-		{ Name = "Collector Kate",Archetype = "Expert",       Budget = 3000, Aggression = 0.5, RiskTolerance = 0.75, Skill = 0.90, OverpayChance = 0.08, BidChance = 0.55, MaxDelay = 3.6 },
-		{ Name = "Rico Flipper",  Archetype = "Aggressive",   Budget = 2200, Aggression = 0.9, RiskTolerance = 0.90, Skill = 0.55, OverpayChance = 0.35, BidChance = 0.75, MaxDelay = 2.2 },
-		{ Name = "Lucky Lou",     Archetype = "Clueless",     Budget = 1000, Aggression = 0.6, RiskTolerance = 1.00, Skill = 0.25, OverpayChance = 0.40, BidChance = 0.45, MaxDelay = 4.5 },
+		{ Name = "Dealer Dan",    Archetype = "Conservative", Budget = 800,  Aggression = 0.3, RiskTolerance = 0.55, Skill = 0.70, OverpayChance = 0.05, BidChance = 0.60, MaxDelay = 3.4, InterestChance = 0.55 },
+		{ Name = "Collector Kate",Archetype = "Expert",       Budget = 1500, Aggression = 0.5, RiskTolerance = 0.70, Skill = 0.90, OverpayChance = 0.08, BidChance = 0.55, MaxDelay = 3.8, InterestChance = 0.50, InterestBonusRare = 0.25 },
+		{ Name = "Rico Flipper",  Archetype = "Aggressive",   Budget = 1200, Aggression = 0.9, RiskTolerance = 0.85, Skill = 0.55, OverpayChance = 0.35, BidChance = 0.75, MaxDelay = 2.4, InterestChance = 0.65, InterestBonusPerHidden = 0.10 },
+		{ Name = "Lucky Lou",     Archetype = "Clueless",     Budget = 700,  Aggression = 0.6, RiskTolerance = 1.00, Skill = 0.25, OverpayChance = 0.40, BidChance = 0.45, MaxDelay = 4.6, InterestChance = 0.40 },
 	},
+
+	-- NPC participation rules (all centralized here).
+	MinActiveNPCs = 1,   -- promote random NPCs until at least this many contest
+	MaxActiveNPCs = 3,   -- demote extras (lowest aggression first), no 4-bot wars
+	CasualPokeMaxBid = 150,  -- uninterested NPCs may only poke below this
+	CasualPokeChance = 0.10, -- ...and rarely at that
+	NPCReactionPause = 0.9,  -- seconds after any bid before NPCs may respond
+	AvgHiddenItemValue = 200, -- baseline each hidden box is worth to NPC guessers
 
 	-- Inspection visibility: how many of the unit's REAL items are shown.
 	-- Weights keyed by visible count; counts above the actual item total are

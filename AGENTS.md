@@ -53,8 +53,10 @@ place file, is hand-editable, and Rojo never touches Workspace (see
 - `InventoryService.luau` — server-side ownership list.
 - `ItemGenerationService` logic lives in shared `ItemUtils.GenerateInstance`
   (server calls it; client never generates).
-- `NPCBidderService.luau` — config personalities; per-auction estimate +
-  MaxBid from true value, skill noise, risk, overpay roll, budget cap.
+- `NPCBidderService.luau` — config personalities; estimates from VISIBLE clues
+  (skill-noisy appraisal) + hidden-box guesses (avg × personality × noise);
+  per-auction interest rolls, 1–3 active cap, reaction pause, no self-outbid.
+  TrueTotalValue is never an input.
 - `UnitGeneratorService.luau` — pre-Inspection hidden loot + visible clues +
   true total (server only; rummage reveals these exact instances).
 - `MapBuilder.luau` — map BEHAVIOR over Studio-authored geometry: locates and
