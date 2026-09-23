@@ -2,11 +2,13 @@
   "className": "Part",
   "properties": {
     "Anchored": true,
+    "CanCollide": false,
     "CanQuery": false,
     "CanTouch": false,
     "CFrame": [230, 7, 34, 1, 0, 0, 0, 1, 0, 0, 0, 1],
     "Color": [255, 200, 60],
     "Material": "Neon",
-    "Size": [75, 14, 65]
+    "Size": [75, 14, 65],
+    "Transparency": 1
   }
 }

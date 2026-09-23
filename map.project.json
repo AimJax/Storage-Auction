@@ -2,7 +2,7 @@
   "name": "StorageAuctionMap",
   "port": 8000,
   "syncback": {
-    "ignoreProperties": ["Transparency", "CanCollide", "Enabled"],
+    "ignoreProperties": [],
     "ignoreNames": ["Baseplate", "Camera", "Terrain", "burst", "burst 2", "circle thing", "cresent", "cresent 2", "fire flipbook", "fire flipbook 2", "fire flipbook 3", "flare", "glow", "glow 2", "light ray", "light rays", "light ring", "lighting flipbook", "lightning explosion flipbook", "lightning ring", "lightning ring 2", "lightning ring 3", "offcenter circle", "spinny thing", "star thing", "thing", "tiny light ray", "vortex"]
   },
   "tree": {

@@ -70,9 +70,10 @@ Rules that keep this safe:
 
 - **Edit-mode only.** Disconnect Argon (or stop its server) before pressing
   Play. Runtime changes (door Transparency, prompt Enabled, box dimming)
-  must never sync back to disk. (`Transparency`/`CanCollide`/`Enabled` are
-  additionally excluded in `map.project.json` syncback, but the Edit-mode
-  rule is the real guard.)
+  must never sync back to disk. This rule is the ONLY guard:
+  `map.project.json` syncback `ignoreProperties` is intentionally empty so
+  deliberate Studio -> filesystem authoring round-trips every static
+  property (including marker Transparency/CanCollide).
 - **One owner per subtree.** Never add Workspace to `default.project.json`;
   never add code services to `map.project.json`. Rojo and Argon must not
   overlap or they will fight.
