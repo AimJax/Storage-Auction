@@ -291,9 +291,8 @@ function AuctionClient.Start()
 		UIController.HideItemPanel()
 	end)
 
-	-- Slot picker: assign selected Bag item, or remove its display.
-	for i, btn in ipairs(refs.SlotButtons) do
-		local slotIndex = i
+	-- Slot picker: assign selected Bag item (dynamic level-aware buttons).
+	UIController.SetSlotClickFactory(function(btn, slotIndex)
 		btn.MouseButton1Click:Connect(function()
 			local instanceId = UIController.GetSelectedItemId()
 			if not instanceId then
@@ -312,7 +311,7 @@ function AuctionClient.Start()
 				UIController.ShowToast(msg)
 			end
 		end)
-	end
+	end)
 	refs.SlotRemoveBtn.MouseButton1Click:Connect(function()
 		local instanceId = UIController.GetSelectedItemId()
 		if not instanceId then
@@ -413,6 +412,60 @@ function AuctionClient.Start()
 			UIController.HideATM()
 		end)
 	end
+
+	-- Warehouse upgrade: server owns level/cash/wins; client sends the bare
+	-- call and renders the returned state.
+	local function refreshWarehouse()
+		local fn = getRemote(GameConfig.RemoteNames.GetWarehouseState, "RemoteFunction")
+		if not fn then
+			return
+		end
+		local ok, res = pcall(function()
+			return fn:InvokeServer()
+		end)
+		if ok and typeof(res) == "table" and res.ok and typeof(res.state) == "table" then
+			UIController.RefreshWarehouse(res.state)
+		end
+	end
+	getRemote(GameConfig.RemoteNames.WarehouseOpened, "RemoteEvent").OnClientEvent:Connect(function()
+		UIController.ShowWarehouse(nil)
+		refreshWarehouse()
+	end)
+	if refs.WHUpgradeButton then
+		refs.WHUpgradeButton.MouseButton1Click:Connect(function()
+			local fn = getRemote(GameConfig.RemoteNames.UpgradeWarehouse, "RemoteFunction")
+			if not fn then
+				return
+			end
+			local ok, res = pcall(function()
+				return fn:InvokeServer()
+			end)
+			if ok and typeof(res) == "table" then
+				UIController.ShowToast(tostring(res.message))
+				if typeof(res.state) == "table" then
+					UIController.RefreshWarehouse(res.state)
+				end
+			else
+				UIController.ShowToast("Upgrade failed")
+			end
+		end)
+	end
+	if refs.WHCloseButton then
+		refs.WHCloseButton.MouseButton1Click:Connect(function()
+			UIController.HideWarehouse()
+		end)
+	end
+	local refreshWarehouseIfOpen = function()
+		if UIController.IsWarehouseVisible() then
+			refreshWarehouse()
+		end
+	end
+	getRemote(GameConfig.RemoteNames.DisplayChanged, "RemoteEvent").OnClientEvent:Connect(function()
+		refreshWarehouseIfOpen()
+	end)
+	getRemote(GameConfig.RemoteNames.InventoryChanged, "RemoteEvent").OnClientEvent:Connect(function()
+		refreshWarehouseIfOpen()
+	end)
 	-- Local proximity check across BOTH sessions (UX only; server validates).
 	-- Picks the nearest BidCenter inside its radius; overlapping zones
 	-- resolve deterministically to the nearer unit (ties keep unit 1).

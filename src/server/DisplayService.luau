@@ -24,7 +24,9 @@ local InventoryService = nil
 local WarehouseService = nil
 local Remotes = nil
 
--- [UserId] = { [slotIndex] = itemInstance (server copy at assign time) }
+-- [UserId] = { [slotIndex] = InstanceId }. Identity only — item fields are
+-- always resolved live from InventoryService so restores and sales can never
+-- desync into stale copies or ghost proxies.
 local assignments = {}
 
 local function rarityColor(rarity)
@@ -68,9 +70,8 @@ end
 
 local function buildProxy(player, slotIndex, item)
 	destroyProxy(player, slotIndex)
-	local slots = WarehouseService and WarehouseService.GetSlots(player)
-	local slot = slots and slots[slotIndex]
-	if not slot then
+	local pos = WarehouseService and WarehouseService.GetSlotPosition(player, slotIndex)
+	if not pos then
 		return nil
 	end
 	local root = WarehouseService.GetWarehouseRoot(player)
@@ -86,7 +87,7 @@ local function buildProxy(player, slotIndex, item)
 	proxy.CanTouch = false
 	proxy.CanQuery = false
 	proxy.Size = Vector3.new(size, size, size)
-	proxy.Position = slot.Position + Vector3.new(0, 0.1 + size / 2 + 1.2, 0)
+	proxy.Position = pos + Vector3.new(0, 0.1 + size / 2 + 1.2, 0)
 	proxy.Color = rarityColor(item.Rarity)
 	proxy.Material = Enum.Material.Glass
 	proxy.Parent = root
@@ -116,8 +117,8 @@ local function findSlotWithItem(userId, instanceId)
 	if not playerSlots then
 		return nil
 	end
-	for slotIndex, item in pairs(playerSlots) do
-		if item.InstanceId == instanceId then
+	for slotIndex, storedId in pairs(playerSlots) do
+		if storedId == instanceId then
 			return slotIndex
 		end
 	end
@@ -160,10 +161,12 @@ end
 
 -- Assign an OWNED item to one of the CALLER's warehouse slots. Touches
 -- nothing belonging to any other player. Replaces the caller's own occupant.
+-- Slot range follows the player's warehouse level (not a hardcoded count).
 function DisplayService.AssignDisplay(player, instanceId, slotIndex)
 	slotIndex = math.floor(tonumber(slotIndex) or 0)
-	if slotIndex < 1 or slotIndex > GameConfig.DisplaySlotCount then
-		return false, "Invalid slot (1-" .. GameConfig.DisplaySlotCount .. ")."
+	local maxSlots = WarehouseService and WarehouseService.GetDisplaySlotCount(player) or GameConfig.DisplaySlotCount
+	if slotIndex < 1 or slotIndex > maxSlots then
+		return false, "Invalid slot (1-" .. maxSlots .. ")."
 	end
 	if typeof(instanceId) ~= "string" or instanceId == "" then
 		return false, "Invalid item."
@@ -172,8 +175,8 @@ function DisplayService.AssignDisplay(player, instanceId, slotIndex)
 	if not item then
 		return false, "You don't own that item."
 	end
-	local slots = WarehouseService and WarehouseService.GetSlots(player)
-	if not slots or not slots[slotIndex] then
+	local pos = WarehouseService and WarehouseService.GetSlotPosition(player, slotIndex)
+	if not pos then
 		return false, "No warehouse plot available in this server."
 	end
 	-- One item cannot occupy multiple slots: clear its old slot first.
@@ -190,7 +193,7 @@ function DisplayService.AssignDisplay(player, instanceId, slotIndex)
 		playerSlots = {}
 		assignments[player.UserId] = playerSlots
 	end
-	playerSlots[slotIndex] = item
+	playerSlots[slotIndex] = instanceId
 	buildProxy(player, slotIndex, item)
 	pushDisplayState(player)
 	return true, item
@@ -226,12 +229,16 @@ function DisplayService.OnItemRemoved(player, instanceId)
 	pushDisplayState(player)
 end
 
--- Snapshot for UI: the CALLER's per-slot occupant info (server data only).
+-- Snapshot for UI: the CALLER's per-slot occupant info (server data only),
+-- plus level/slot metadata so the client picker needs no hardcoded counts.
 function DisplayService.GetDisplayState(player)
-	local state = { slots = {} }
+	local maxSlots = WarehouseService and WarehouseService.GetDisplaySlotCount(player) or GameConfig.DisplaySlotCount
+	local level = WarehouseService and WarehouseService.GetLevel(player) or 1
+	local state = { slots = {}, slotCount = maxSlots, level = level }
 	local playerSlots = assignments[player.UserId] or {}
-	for i = 1, GameConfig.DisplaySlotCount do
-		local item = playerSlots[i]
+	for i = 1, maxSlots do
+		local storedId = playerSlots[i]
+		local item = if typeof(storedId) == "string" then ownsItem(player, storedId) else nil
 		if item then
 			state.slots[i] = {
 				instanceId = item.InstanceId,
@@ -244,6 +251,71 @@ function DisplayService.GetDisplayState(player)
 		end
 	end
 	return state
+end
+
+-- Sanitized persistent form: { [slot] = InstanceId }. No models, positions,
+-- or plot references — data only.
+function DisplayService.GetPersistentAssignments(player)
+	local out = {}
+	if not player then
+		return out
+	end
+	for slotIndex, storedId in pairs(assignments[player.UserId] or {}) do
+		if typeof(slotIndex) == "number" and typeof(storedId) == "string" then
+			out[slotIndex] = storedId
+		end
+	end
+	return out
+end
+
+-- Restore persisted assignments (Stage 6): keep only integer slots within
+-- the player's level allowance, string ids present in the restored
+-- inventory, and no id twice. Proxies rebuild only when a warehouse exists
+-- (plot claim refreshes them separately). Returns count kept.
+function DisplayService.RestoreAssignments(player, map)
+	assignments[player.UserId] = {}
+	if not player or typeof(map) ~= "table" then
+		return 0
+	end
+	local maxSlots = WarehouseService and WarehouseService.GetDisplaySlotCount(player) or GameConfig.DisplaySlotCount
+	local owned = {}
+	for _, item in ipairs(InventoryService.GetItems(player)) do
+		owned[item.InstanceId] = true
+	end
+	local kept = {}
+	local count = 0
+	for slotIndex, instanceId in pairs(map) do
+		slotIndex = math.floor(tonumber(slotIndex) or 0)
+		if slotIndex >= 1 and slotIndex <= maxSlots
+			and typeof(instanceId) == "string"
+			and owned[instanceId] and not kept[instanceId]
+		then
+			kept[instanceId] = true
+			assignments[player.UserId][slotIndex] = instanceId
+			count += 1
+		end
+	end
+	DisplayService.RefreshProxies(player)
+	pushDisplayState(player)
+	return count
+end
+
+-- Rebuild every display proxy from stored assignments (plot claim, level
+-- change). Missing warehouse/items resolve to no proxy, never an error.
+function DisplayService.RefreshProxies(player)
+	if not player then
+		return
+	end
+	local playerSlots = assignments[player.UserId] or {}
+	for slotIndex, storedId in pairs(playerSlots) do
+		local item = ownsItem(player, storedId)
+		if item then
+			buildProxy(player, slotIndex, item)
+		else
+			destroyProxy(player, slotIndex)
+		end
+	end
+	pushDisplayState(player)
 end
 
 -- Records only; the warehouse itself is destroyed by PlotService.ReleasePlot.

@@ -18,6 +18,7 @@ local PlotService = {}
 
 local Remotes = nil
 local WarehouseService = nil
+local DisplayService = nil
 
 -- plots[index] = { index, name, model, origin (CFrame), originPos (Vector3),
 --                  signLabel (TextLabel or nil), prompt (ProximityPrompt or nil),
@@ -74,6 +75,7 @@ end
 function PlotService.Init(deps)
 	Remotes = deps.Remotes
 	WarehouseService = deps.WarehouseService
+	DisplayService = deps.DisplayService
 
 	local district = game.Workspace:FindFirstChild("StorageAuctionMap")
 	if district then
@@ -203,6 +205,11 @@ function PlotService.ClaimPlot(player, index)
 	setPromptEnabled(plot, false)
 	if WarehouseService then
 		WarehouseService.BuildFor(player, plot)
+	end
+	-- Rebuild restored display proxies inside the newly claimed warehouse
+	-- (works on ANY plot: proxies resolve to this clone's anchors).
+	if DisplayService then
+		DisplayService.RefreshProxies(player)
 	end
 	notify(player, plot.name .. " claimed!")
 	return plot

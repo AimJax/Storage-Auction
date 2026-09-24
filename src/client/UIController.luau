@@ -302,7 +302,9 @@ function UIController.Build()
 	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.ItemCloseBtn)
 	refs.ItemPanel = itemPanel
 
-	-- Slot picker popup: 6 slot buttons + REMOVE DISPLAY + CLOSE.
+	-- Slot picker popup: level-aware slot buttons in a scroll list + REMOVE
+	-- DISPLAY + CLOSE. Button count follows displayState.slotCount (server
+	-- warehouse level); no hardcoded slot assumptions client-side.
 	local slotPanel = mk("Frame", {
 		Name = "SlotPanel",
 		Size = UDim2.new(0, 230, 0, 300),
@@ -318,28 +320,24 @@ function UIController.Build()
 		Text = "DISPLAY IN SLOT", TextColor3 = Color3.new(1, 1, 1),
 		Font = Enum.Font.GothamBold, TextSize = 13,
 	}, slotPanel)
+	refs.SlotScroll = mk("ScrollingFrame", {
+		Name = "SlotScroll",
+		Size = UDim2.new(1, -16, 0, 188),
+		Position = UDim2.new(0, 8, 0, 26),
+		BackgroundTransparency = 1,
+		ScrollBarThickness = 6,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+	}, slotPanel)
 	refs.SlotButtons = {}
-	for i = 1, 6 do
-		local btn = mk("TextButton", {
-			Size = UDim2.new(1, -16, 0, 28),
-			Position = UDim2.new(0, 8, 0, 26 + (i - 1) * 32),
-			BackgroundColor3 = Color3.fromRGB(40, 40, 52),
-			Text = i .. ": (empty)",
-			TextColor3 = Color3.new(1, 1, 1),
-			Font = Enum.Font.Gotham, TextSize = 12,
-			TextTruncate = Enum.TextTruncate.AtEnd,
-		}, slotPanel)
-		mk("UICorner", { CornerRadius = UDim.new(0, 6) }, btn)
-		refs.SlotButtons[i] = btn
-	end
+	refs.SlotButtonCount = 0
 	refs.SlotRemoveBtn = mk("TextButton", {
-		Size = UDim2.new(1, -16, 0, 28), Position = UDim2.new(0, 8, 0, 222),
+		Size = UDim2.new(1, -16, 0, 28), Position = UDim2.new(0, 8, 0, 218),
 		BackgroundColor3 = Color3.fromRGB(140, 60, 60), Text = "REMOVE DISPLAY",
 		TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 12,
 	}, slotPanel)
 	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, refs.SlotRemoveBtn)
 	refs.SlotCloseBtn = mk("TextButton", {
-		Size = UDim2.new(1, -16, 0, 26), Position = UDim2.new(0, 8, 0, 254),
+		Size = UDim2.new(1, -16, 0, 26), Position = UDim2.new(0, 8, 0, 250),
 		BackgroundColor3 = Color3.fromRGB(60, 60, 70), Text = "CLOSE",
 		TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.Gotham, TextSize = 12,
 	}, slotPanel)
@@ -513,6 +511,92 @@ function UIController.Build()
 	}, atm)
 	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.ATMCloseButton)
 	refs.ATMFrame = atm
+
+	-- Warehouse upgrade panel: compact, centered-left, hidden by default.
+	-- Shows current level/capacity/slots + next-level cost/requirements.
+	local wh = mk("Frame", {
+		Name = "Warehouse",
+		Size = UDim2.new(0, 280, 0, 300),
+		Position = UDim2.new(0.5, -140, 0.5, -150),
+		BackgroundColor3 = Color3.fromRGB(22, 22, 30),
+		BackgroundTransparency = 0.05,
+		Visible = false,
+	}, gui)
+	mk("UICorner", { CornerRadius = UDim.new(0, 10) }, wh)
+	mk("UIStroke", { Color = Color3.fromRGB(90, 140, 220), Thickness = 1 }, wh)
+	mk("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 26),
+		BackgroundTransparency = 1,
+		Text = "WAREHOUSE",
+		TextColor3 = Color3.fromRGB(150, 190, 255),
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+	}, wh)
+	refs.WHLevelLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 20),
+		Position = UDim2.new(0, 8, 0, 28),
+		BackgroundTransparency = 1,
+		Text = "Level 1",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, wh)
+	refs.WHStatsLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 40),
+		Position = UDim2.new(0, 8, 0, 50),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = Color3.fromRGB(200, 200, 205),
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, wh)
+	refs.WHNextLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 100),
+		Position = UDim2.new(0, 8, 0, 94),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = Color3.fromRGB(200, 200, 205),
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true,
+	}, wh)
+	refs.WHUpgradeButton = mk("TextButton", {
+		Size = UDim2.new(1, -16, 0, 36),
+		Position = UDim2.new(0, 8, 0, 200),
+		BackgroundColor3 = Color3.fromRGB(40, 130, 85),
+		Text = "UPGRADE",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+	}, wh)
+	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.WHUpgradeButton)
+	refs.WHReasonLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 22),
+		Position = UDim2.new(0, 8, 0, 238),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = Color3.fromRGB(255, 170, 150),
+		Font = Enum.Font.Gotham,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, wh)
+	refs.WHCloseButton = mk("TextButton", {
+		Size = UDim2.new(1, -16, 0, 30),
+		Position = UDim2.new(0, 8, 0, 262),
+		BackgroundColor3 = Color3.fromRGB(50, 55, 70),
+		Text = "CLOSE",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+	}, wh)
+	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.WHCloseButton)
+	refs.WHFrame = wh
 
 	return refs
 end
@@ -702,6 +786,58 @@ end
 
 function UIController.IsATMVisible()
 	return refs.ATMFrame and refs.ATMFrame.Visible or false
+end
+
+-- Warehouse upgrade panel. Pure render of the server GetWarehouseState
+-- payload; upgrade decisions stay server-side.
+function UIController.ShowWarehouse(state)
+	if not refs.WHFrame then
+		return
+	end
+	refs.WHFrame.Visible = true
+	if state then
+		UIController.RefreshWarehouse(state)
+	end
+end
+
+function UIController.HideWarehouse()
+	if refs.WHFrame then
+		refs.WHFrame.Visible = false
+	end
+end
+
+function UIController.IsWarehouseVisible()
+	return refs.WHFrame and refs.WHFrame.Visible or false
+end
+
+function UIController.RefreshWarehouse(state)
+	if not refs.WHFrame or typeof(state) ~= "table" then
+		return
+	end
+	local level = tonumber(state.level) or 1
+	refs.WHLevelLabel.Text = string.format("Level %d / %d", level, tonumber(state.maxLevel) or level)
+	refs.WHStatsLabel.Text = string.format("Storage: %d / %d\nDisplay slots: %d",
+		tonumber(state.inventoryCount) or 0, tonumber(state.storageCapacity) or 0,
+		tonumber(state.displaySlots) or 0)
+	local next = state.next
+	if typeof(next) == "table" then
+		refs.WHNextLabel.Text = string.format("Next: Lv %d\nCost: $%s\nWins: %d\nStorage: %d · Slots: %d",
+			tonumber(next.level) or 0, formatMoney(next.cost or 0), tonumber(next.minWins) or 0,
+			tonumber(next.capacity) or 0, tonumber(next.slots) or 0)
+	else
+		refs.WHNextLabel.Text = "Max level reached."
+	end
+	local can = state.canUpgrade == true
+	if refs.WHUpgradeButton then
+		refs.WHUpgradeButton.Active = can
+		refs.WHUpgradeButton.AutoButtonColor = can
+		refs.WHUpgradeButton.BackgroundColor3 = if can
+			then Color3.fromRGB(40, 130, 85)
+			else Color3.fromRGB(70, 70, 80)
+	end
+	if refs.WHReasonLabel then
+		refs.WHReasonLabel.Text = if can then "" else tostring(state.reason or "")
+	end
 end
 
 function UIController.RefreshATM(state)
@@ -910,8 +1046,33 @@ function UIController.IsSlotPickerVisible()
 end
 
 function UIController.RefreshSlotPicker(displayState)
-	if not refs.SlotButtons then
+	if not refs.SlotButtons or not refs.SlotScroll then
 		return
+	end
+	local count = math.clamp(math.floor(tonumber(displayState and displayState.slotCount) or 6), 1, 64)
+	if count ~= refs.SlotButtonCount then
+		for _, child in ipairs(refs.SlotScroll:GetChildren()) do
+			if child:IsA("TextButton") then
+				child:Destroy()
+			end
+		end
+		refs.SlotButtons = {}
+		for i = 1, count do
+			local btn = mk("TextButton", {
+				Size = UDim2.new(1, -8, 0, 28),
+				Position = UDim2.new(0, 4, 0, (i - 1) * 32),
+				BackgroundColor3 = Color3.fromRGB(40, 40, 52),
+				Text = i .. ": (empty)",
+				TextColor3 = Color3.new(1, 1, 1),
+				Font = Enum.Font.Gotham, TextSize = 12,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+			}, refs.SlotScroll)
+			mk("UICorner", { CornerRadius = UDim.new(0, 6) }, btn)
+			refs.SlotButtons[i] = btn
+		end
+		refs.SlotScroll.CanvasSize = UDim2.new(0, 0, 0, count * 32)
+		refs.SlotButtonCount = count
+		UIController.RewireSlotButtons()
 	end
 	local slots = (displayState and displayState.slots) or {}
 	for i, btn in ipairs(refs.SlotButtons) do
@@ -921,6 +1082,23 @@ function UIController.RefreshSlotPicker(displayState)
 		else
 			btn.Text = i .. ": (empty)"
 		end
+	end
+end
+
+-- Rebind per-button click handlers after a rebuild. AuctionClient registers
+-- its handler factory here so dynamic buttons behave like the old static ones.
+local slotClickFactory = nil
+function UIController.SetSlotClickFactory(fn)
+	slotClickFactory = fn
+	UIController.RewireSlotButtons()
+end
+
+function UIController.RewireSlotButtons()
+	if not slotClickFactory then
+		return
+	end
+	for i, btn in ipairs(refs.SlotButtons or {}) do
+		slotClickFactory(btn, i)
 	end
 end
 

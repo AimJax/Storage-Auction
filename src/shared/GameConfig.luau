@@ -109,7 +109,20 @@ local GameConfig = {
 	-- Showroom (MVP): fixed personal-collection slots, one shared area.
 	-- Display assignments are tracked per player so per-player showrooms
 	-- can replace the shared area later without changing the record shape.
-	DisplaySlotCount = 6,
+	DisplaySlotCount = 6, -- legacy default = Level 1 slots; levels override
+	PersistSchemaVersion = 2,
+
+	-- Warehouse progression (Stage 6). Level is permanent player progression;
+	-- physical plot assignment stays session-local. Slots beyond the 6
+	-- template markers use a runtime grid (no map changes). StorageCapacity
+	-- is gameplay inventory cap (grandfathered over-cap keeps, can't Keep new).
+	WarehouseLevels = {
+		{ DisplaySlots = 6,  StorageCapacity = 25,  UpgradeCost = 0,      MinWins = 0 },
+		{ DisplaySlots = 10, StorageCapacity = 50,  UpgradeCost = 2500,   MinWins = 3 },
+		{ DisplaySlots = 16, StorageCapacity = 100, UpgradeCost = 10000,  MinWins = 10 },
+		{ DisplaySlots = 24, StorageCapacity = 200, UpgradeCost = 35000,  MinWins = 25 },
+		{ DisplaySlots = 36, StorageCapacity = 500, UpgradeCost = 100000, MinWins = 60 },
+	},
 
 	-- First progression gate (teaser only — no premium gameplay yet).
 	PremiumAuctionsWinsRequired = 5,
@@ -174,8 +187,8 @@ local GameConfig = {
 	RecoveryTargetCash = 125,
 	RecoveryCooldown = 300,
 
-	-- Persistence (Stage 5B). Same SA_M1_v1 store, extended schema.
-	PersistSchemaVersion = 1,
+	-- Persistence (Stage 5B/6). Same SA_M1_v1 store, extended schema.
+	PersistSchemaVersion = 2,
 	PersistInventoryLimit = 500, -- max kept items per save; oldest-valid kept first
 	PersistAutosaveInterval = 120, -- seconds between autosaves (loaded players only)
 
@@ -221,6 +234,9 @@ local GameConfig = {
 		DebtChanged = "DebtChanged",
 		DisplayItem = "DisplayItem",
 		RemoveDisplay = "RemoveDisplay",
+		GetWarehouseState = "GetWarehouseState",
+		UpgradeWarehouse = "UpgradeWarehouse",
+		WarehouseOpened = "WarehouseOpened",
 	},
 }
 

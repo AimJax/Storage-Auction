@@ -54,6 +54,13 @@ function InventoryService.GetItems(player)
 	return copy
 end
 
+function InventoryService.GetCount(player)
+	if not player then
+		return 0
+	end
+	return #(inventories[player.UserId] or {})
+end
+
 -- Removes by InstanceId. Returns removed item or nil.
 function InventoryService.RemoveItem(player, instanceId)
 	local list = inventories[player.UserId]

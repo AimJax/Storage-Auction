@@ -42,6 +42,9 @@ local function ensureRemotes()
 		{ GameConfig.RemoteNames.SellItem, "RemoteFunction" },
 		{ GameConfig.RemoteNames.DisplayItem, "RemoteFunction" },
 		{ GameConfig.RemoteNames.RemoveDisplay, "RemoteFunction" },
+		{ GameConfig.RemoteNames.GetWarehouseState, "RemoteFunction" },
+		{ GameConfig.RemoteNames.UpgradeWarehouse, "RemoteFunction" },
+		{ GameConfig.RemoteNames.WarehouseOpened, "RemoteEvent" },
 		{ GameConfig.RemoteNames.GetATMState, "RemoteFunction" },
 		{ GameConfig.RemoteNames.TakeLoan, "RemoteFunction" },
 		{ GameConfig.RemoteNames.ClaimRecovery, "RemoteFunction" },
@@ -68,6 +71,8 @@ PlayerDataService.Init({
 	InventoryService = InventoryService,
 	PlayerStatsService = PlayerStatsService,
 	DebtService = DebtService,
+	WarehouseService = WarehouseService,
+	DisplayService = DisplayService,
 })
 PlayerDataService.StartAutosave()
 
@@ -87,6 +92,7 @@ AuctionService.Init({
 	PlayerStatsService = PlayerStatsService,
 	DisplayService = DisplayService,
 	DebtService = DebtService,
+	WarehouseService = WarehouseService,
 })
 
 -- 4b) Runtime ATM loans/debt/recovery (no persistence in Stage 5A).
@@ -114,9 +120,14 @@ PlotService.Init({
 	MapHandles = mapHandles,
 	Remotes = remotes,
 	WarehouseService = WarehouseService,
+	DisplayService = DisplayService,
 })
 WarehouseService.Init({
 	MapHandles = mapHandles,
+	EconomyService = EconomyService,
+	PlayerStatsService = PlayerStatsService,
+	InventoryService = InventoryService,
+	Remotes = remotes,
 })
 
 -- 7) Players.

@@ -34,6 +34,8 @@ local EconomyServiceRef = nil
 local InventoryServiceRef = nil
 local PlayerStatsServiceRef = nil
 local DebtServiceRef = nil
+local WarehouseServiceRef = nil
+local DisplayServiceRef = nil
 
 local loaded = {} -- [UserId] = true once fully loaded (or session fallback)
 
@@ -42,6 +44,8 @@ function PlayerDataService.Init(deps)
 	InventoryServiceRef = deps.InventoryService
 	PlayerStatsServiceRef = deps.PlayerStatsService
 	DebtServiceRef = deps.DebtService
+	WarehouseServiceRef = deps.WarehouseService
+	DisplayServiceRef = deps.DisplayService
 end
 
 function PlayerDataService.IsLoaded(player)
@@ -98,6 +102,10 @@ local function sanitizeRecord(raw)
 		AuctionsWon = sanitizeNumber(raw.AuctionsWon, 0, 0, nil),
 		Debt = sanitizeNumber(raw.Debt, 0, 0, nil),
 		RecoveryAvailableAt = sanitizeNumber(raw.RecoveryAvailableAt, 0, 0, nil),
+		-- Stage 6: warehouse level clamps to the configured ladder (default 1);
+		-- display assignments restore against inventory + level afterwards.
+		WarehouseLevel = sanitizeNumber(raw.WarehouseLevel, 1, 1, #GameConfig.WarehouseLevels),
+		DisplayAssignments = if typeof(raw.DisplayAssignments) == "table" then raw.DisplayAssignments else {},
 		SchemaVersion = tonumber(raw.SchemaVersion) or 0,
 	}
 end
@@ -124,16 +132,23 @@ function PlayerDataService.Load(player)
 	end
 	local clean = sanitizeRecord(data)
 	-- Deterministic restore order; every push keeps the client consistent.
+	-- Over-cap grandfathered inventories restore intact (only NEW keeps gate).
 	EconomyServiceRef.SetCash(player, clean.Cash)
 	InventoryServiceRef.RestoreItems(player, clean.Inventory)
 	if PlayerStatsServiceRef then
 		PlayerStatsServiceRef.RestoreWins(player, clean.AuctionsWon)
+	end
+	if WarehouseServiceRef then
+		WarehouseServiceRef.RestoreLevel(player, clean.WarehouseLevel)
 	end
 	if DebtServiceRef then
 		DebtServiceRef.RestorePlayer(player, {
 			debt = clean.Debt,
 			recoveryAvailableAt = clean.RecoveryAvailableAt,
 		})
+	end
+	if DisplayServiceRef then
+		DisplayServiceRef.RestoreAssignments(player, clean.DisplayAssignments)
 	end
 	if PlayerStatsServiceRef then
 		PlayerStatsServiceRef.Push(player)
@@ -169,14 +184,24 @@ local function snapshot(player)
 	if DebtServiceRef then
 		debtState = DebtServiceRef.GetPersistentState(player)
 	end
+	local warehouseLevel = 1
+	if WarehouseServiceRef then
+		warehouseLevel = WarehouseServiceRef.GetLevel(player)
+	end
+	local displayAssignments = {}
+	if DisplayServiceRef then
+		displayAssignments = DisplayServiceRef.GetPersistentAssignments(player)
+	end
 	return {
 		Cash = sanitizeNumber(cash, 0, 0, GameConfig.MaxCash),
 		Inventory = inventory,
 		AuctionsWon = sanitizeNumber(wins, 0, 0, nil),
 		Debt = sanitizeNumber(debtState.debt, 0, 0, nil),
 		RecoveryAvailableAt = sanitizeNumber(debtState.recoveryAvailableAt, 0, 0, nil),
+		WarehouseLevel = sanitizeNumber(warehouseLevel, 1, 1, #GameConfig.WarehouseLevels),
+		DisplayAssignments = displayAssignments,
 		SavedAt = os.time(),
-		SchemaVersion = tonumber(GameConfig.PersistSchemaVersion) or 1,
+		SchemaVersion = tonumber(GameConfig.PersistSchemaVersion) or 2,
 	}
 end
 

@@ -27,6 +27,7 @@ local Remotes = nil
 local PlayerStatsService = nil
 local DisplayService = nil
 local DebtService = nil
+local WarehouseService = nil
 
 -- Sessions own ALL mutable auction state. Nothing auction-related lives in
 -- module globals (only service refs + the session list itself).
@@ -375,6 +376,8 @@ end
 
 -- Resolve the pending decision as KEEP within one session. Only the matching
 -- pending InstanceId is accepted; no client-supplied item data is trusted.
+-- Warehouse capacity gates new keeps (grandfathered over-cap inventories can
+-- still sell; the pending decision stays active until Sell or free space).
 function AuctionService.TryKeepItem(unitIndex, player, instanceId)
 	local s, err = resolveSession(unitIndex)
 	if not s then
@@ -386,6 +389,9 @@ function AuctionService.TryKeepItem(unitIndex, player, instanceId)
 	end
 	if instanceId ~= nil and instanceId ~= pending.InstanceId then
 		return false, "That item is no longer pending."
+	end
+	if WarehouseService and InventoryService.GetCount(player) >= WarehouseService.GetStorageCapacity(player) then
+		return false, "Warehouse storage is full. Sell the item or upgrade your warehouse."
 	end
 	s.PendingByUser[player.UserId] = nil
 	InventoryService.AddItem(player, pending)
@@ -433,7 +439,9 @@ local function winnerHasPending(s)
 end
 
 -- Grace expiry fallback: never delete value. Auto-keep the pending item so
--- an idle/disconnected-decision player keeps what they opened.
+-- an idle/disconnected-decision player keeps what they opened. If the
+-- warehouse is full, auto-SELL instead (cash preserves value; nothing is
+-- ever deleted or kept into an over-cap inventory).
 local function forceKeepPending(s, userId)
 	local pending = s.PendingByUser[userId]
 	if not pending then
@@ -442,6 +450,15 @@ local function forceKeepPending(s, userId)
 	s.PendingByUser[userId] = nil
 	local player = Players:GetPlayerByUserId(userId)
 	if player then
+		if WarehouseService and InventoryService.GetCount(player) >= WarehouseService.GetStorageCapacity(player) then
+			local cashAdded = DebtService.ApplySaleProceeds(player, pending.FinalValue)
+			PlayerStatsService.Push(player)
+			local notify = Remotes and Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
+			if notify then
+				notify:FireClient(player, { text = "Warehouse full - auto-sold " .. pending.Name .. " for $" .. cashAdded, closeReveal = true })
+			end
+			return
+		end
 		InventoryService.AddItem(player, pending)
 		PlayerStatsService.Push(player)
 		local notify = Remotes and Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
@@ -680,6 +697,7 @@ function AuctionService.Init(deps)
 	PlayerStatsService = deps.PlayerStatsService
 	DisplayService = deps.DisplayService
 	DebtService = deps.DebtService
+	WarehouseService = deps.WarehouseService
 
 	-- One independent session per physical unit. Tier is fixed per unit:
 	-- Unit 1 = Budget, Unit 2 = Standard, Unit 3 = HighRoller (GameConfig).
