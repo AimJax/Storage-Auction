@@ -1,5 +1,9 @@
 --!nonstrict
--- StorageAuction M1 — client glue: remotes, bid/sell/open wiring.
+-- StorageAuction — client glue: remotes, bid/sell/open wiring.
+-- Tracks BOTH auction sessions (snapshots[unitIndex]) and shows the HUD for
+-- whichever session the player is physically nearest to (inside its radius).
+-- All bidding/sell/keep calls address that session explicitly by unitIndex;
+-- the server validates everything authoritatively.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -13,12 +17,22 @@ local AuctionClient = {}
 
 local player = Players.LocalPlayer
 local remotes = nil
-local snapshot = { state = "Waiting", timeLeft = 0, currentBid = 0, bidder = "", minIncrement = 25, winner = "" }
+
+local function blankSnapshot()
+	return { unitIndex = 0, state = "Waiting", timeLeft = 0, currentBid = 0, bidder = "", minIncrement = 25, winner = "" }
+end
+
+-- One snapshot per session; the server broadcasts each with its unitIndex.
+local snapshots = { [1] = blankSnapshot(), [2] = blankSnapshot() }
+local prevStates = { [1] = "Waiting", [2] = "Waiting" }
+local lastSeenBid = { [1] = -1, [2] = -1 }
+-- Session the local player is currently interacting with (nearest center
+-- inside its radius), or nil when near neither. Pure UX; server validates.
+local nearUnit = nil
+local inRadius = false
 local cash = 0
-local lastSeenBid = -1
--- Local auction-radius flag (UX only; the server validates every bid).
--- Auction toasts/hints follow it; Sell/Keep feedback always shows.
-local inRadius = true
+-- Session that produced the open reveal panel (Sell/Keep resolves there).
+local revealUnit = nil
 local displayState = { slots = {} }
 
 local function getRemote(name, className)
@@ -40,47 +54,73 @@ local function formatMoney(n)
 	return s .. out
 end
 
+-- Snapshot currently on screen: the nearby session's, or a blank hidden one.
+local function displaySnapshot()
+	if nearUnit and snapshots[nearUnit] then
+		return snapshots[nearUnit]
+	end
+	return blankSnapshot()
+end
+
 function AuctionClient.Start()
 	remotes = ReplicatedStorage:WaitForChild(GameConfig.RemotesFolderName)
 	local refs = UIController.Build()
 	local function refresh()
-		UIController.UpdateStatus(snapshot, cash, player.Name, inRadius)
+		UIController.UpdateStatus(displaySnapshot(), cash, player.Name, inRadius)
 	end
 	refresh()
+
+	local function handleSessionData(data)
+		local idx = tonumber(data.unitIndex)
+		if idx ~= 1 and idx ~= 2 then
+			return
+		end
+		local prevState = prevStates[idx]
+		prevStates[idx] = data.state
+		snapshots[idx] = data
+		refresh()
+		-- Toasts only for the session the player is standing at.
+		local watching = inRadius and nearUnit == idx
+		if watching
+			and data.state == "Bidding"
+			and (data.currentBid or 0) > lastSeenBid[idx]
+			and (data.bidder or "") ~= ""
+			and data.bidder ~= player.Name
+		then
+			UIController.ShowToast(data.bidder .. " bid $" .. formatMoney(data.currentBid))
+		end
+		lastSeenBid[idx] = data.currentBid or 0
+		if data.state == "Sold" and prevState ~= "Sold" then
+			lastSeenBid[idx] = -1 -- reset for next auction
+			if watching then
+				if data.winner and data.winner ~= "" then
+					if data.winner == player.Name then
+						UIController.ShowToast("You won unit " .. idx .. " for $" .. formatMoney(data.currentBid) .. "!", 4)
+					else
+						UIController.ShowToast(data.winner .. " won unit " .. idx .. " for $" .. formatMoney(data.currentBid))
+					end
+				else
+					UIController.ShowToast("No winner at unit " .. idx)
+				end
+			end
+		end
+	end
 
 	-- Server -> client streams
 	getRemote(GameConfig.RemoteNames.AuctionState, "RemoteEvent").OnClientEvent:Connect(function(data)
 		if typeof(data) ~= "table" then
 			return
 		end
-		local prevState = snapshot.state
-		snapshot = data
-		refresh()
-		-- Toast rival bids as they happen (not on every broadcast tick).
-		-- Auction toasts only make sense inside the radius.
-		if inRadius
-			and snapshot.state == "Bidding"
-			and (snapshot.currentBid or 0) > lastSeenBid
-			and (snapshot.bidder or "") ~= ""
-			and snapshot.bidder ~= player.Name
-		then
-			UIController.ShowToast(snapshot.bidder .. " bid $" .. formatMoney(snapshot.currentBid))
-		end
-		lastSeenBid = snapshot.currentBid or 0
-		if snapshot.state == "Sold" and prevState ~= "Sold" then
-			lastSeenBid = -1 -- reset for next auction
-			if inRadius then
-				if snapshot.winner and snapshot.winner ~= "" then
-					if snapshot.winner == player.Name then
-						UIController.ShowToast("You won the unit for $" .. formatMoney(snapshot.currentBid) .. "!", 4)
-					else
-						UIController.ShowToast(snapshot.winner .. " won for $" .. formatMoney(snapshot.currentBid))
-					end
-				else
-					UIController.ShowToast("No winner this round")
+		if typeof(data.auctions) == "table" then
+			-- Full picture (join/rejoin recovery): both sessions at once.
+			for _, sess in pairs(data.auctions) do
+				if typeof(sess) == "table" then
+					handleSessionData(sess)
 				end
 			end
+			return
 		end
+		handleSessionData(data)
 	end)
 	getRemote(GameConfig.RemoteNames.CashChanged, "RemoteEvent").OnClientEvent:Connect(function(amount)
 		cash = tonumber(amount) or 0
@@ -108,8 +148,10 @@ function AuctionClient.Start()
 			end
 		end
 	end)
-	getRemote(GameConfig.RemoteNames.ItemRevealed, "RemoteEvent").OnClientEvent:Connect(function(item)
+	getRemote(GameConfig.RemoteNames.ItemRevealed, "RemoteEvent").OnClientEvent:Connect(function(item, unitIndex)
 		if typeof(item) == "table" then
+			local idx = tonumber(unitIndex)
+			revealUnit = if idx == 1 or idx == 2 then idx else nearUnit
 			UIController.ShowReveal(item)
 		end
 	end)
@@ -141,25 +183,30 @@ function AuctionClient.Start()
 		end
 	end)
 
-	-- Bid
+	-- Bid (targets the nearby session explicitly)
 	refs.BidButton.MouseButton1Click:Connect(function()
+		if not nearUnit then
+			return
+		end
+		local snap = snapshots[nearUnit]
 		local fn = getRemote(GameConfig.RemoteNames.PlaceBid, "RemoteFunction")
 		if not fn then
 			return
 		end
-		local amount = (snapshot.currentBid or 0) + (snapshot.minIncrement or 25)
+		local amount = (snap.currentBid or 0) + (snap.minIncrement or 25)
+		local unit = nearUnit
 		local ok, res = pcall(function()
-			return fn:InvokeServer(amount)
+			return fn:InvokeServer(unit, amount)
 		end)
 		if ok and typeof(res) == "table" then
 			if res.ok then
-				lastSeenBid = amount -- don't toast our own bid back at ourselves
+				lastSeenBid[unit] = amount -- don't toast our own bid back at ourselves
 				UIController.ShowToast("Your bid: $" .. formatMoney(amount))
 			else
 				UIController.ShowToast(tostring(res.message))
 			end
-			if res.snapshot then
-				snapshot = res.snapshot
+			if typeof(res.snapshot) == "table" then
+				snapshots[unit] = res.snapshot
 				refresh()
 			end
 		else
@@ -167,15 +214,17 @@ function AuctionClient.Start()
 		end
 	end)
 
-	-- Sell / Keep (both auto-close the reveal panel)
+	-- Sell / Keep (both auto-close the reveal panel; resolve in the
+	-- session that produced the reveal)
 	refs.SellButton.MouseButton1Click:Connect(function()
 		local instanceId = UIController.GetRevealInstanceId()
 		if not instanceId then
 			return
 		end
+		local unit = revealUnit or nearUnit or 1
 		local fn = getRemote(GameConfig.RemoteNames.SellItem, "RemoteFunction")
 		local ok, res = pcall(function()
-			return fn:InvokeServer(instanceId)
+			return fn:InvokeServer(unit, instanceId)
 		end)
 		UIController.HideReveal()
 		if ok and typeof(res) == "table" and res.ok then
@@ -190,9 +239,10 @@ function AuctionClient.Start()
 		if not instanceId then
 			return
 		end
+		local unit = revealUnit or nearUnit or 1
 		local fn = getRemote(GameConfig.RemoteNames.KeepItem, "RemoteFunction")
 		local ok, res = pcall(function()
-			return fn:InvokeServer(instanceId)
+			return fn:InvokeServer(unit, instanceId)
 		end)
 		if ok and typeof(res) == "table" and res.ok then
 			UIController.HideReveal()
@@ -218,7 +268,7 @@ function AuctionClient.Start()
 		end
 		local fn = getRemote(GameConfig.RemoteNames.SellItem, "RemoteFunction")
 		local ok, res = pcall(function()
-			return fn:InvokeServer(instanceId)
+			return fn:InvokeServer(nearUnit or 1, instanceId)
 		end)
 		if ok and typeof(res) == "table" and res.ok then
 			UIController.HideItemPanel()
@@ -274,23 +324,26 @@ function AuctionClient.Start()
 	refs.SlotCloseBtn.MouseButton1Click:Connect(function()
 		UIController.HideSlotPicker()
 	end)
-	-- Local proximity check for the auction HUD (UX only; server validates).
-	-- Runs on a slow tick so entering/leaving the radius updates immediately
-	-- without spamming anything.
+	-- Local proximity check across BOTH sessions (UX only; server validates).
+	-- Picks the nearest BidCenter inside its radius; overlapping zones
+	-- resolve deterministically to the nearer unit (ties keep unit 1).
+	-- Runs on a slow tick so walking between units updates the HUD without
+	-- spamming anything.
 	task.spawn(function()
 		while true do
 			task.wait(0.5)
-			inRadius = AuctionClient.IsWithinBidRadius()
+			nearUnit, inRadius = AuctionClient.NearestSession()
 			refresh()
 		end
 	end)
 end
 
--- Mirrors the server's XZ bid-radius check using the broadcast center.
+-- Mirrors the server's XZ bid-radius check against one session's center.
 -- Missing data/character counts as outside (button hidden, never a bid).
-function AuctionClient.IsWithinBidRadius()
-	local center = snapshot.bidCenter
-	local radius = snapshot.bidRadius or GameConfig.BidRadius
+function AuctionClient.IsWithinBidRadius(snap)
+	snap = snap or displaySnapshot()
+	local center = snap.bidCenter
+	local radius = snap.bidRadius or GameConfig.BidRadius
 	if typeof(center) ~= "table" then
 		return false
 	end
@@ -302,6 +355,31 @@ function AuctionClient.IsWithinBidRadius()
 	local dx = root.Position.X - (tonumber(center.x) or 0)
 	local dz = root.Position.Z - (tonumber(center.z) or 0)
 	return (dx * dx + dz * dz) <= radius * radius
+end
+
+-- Returns (unitIndex|nil, inRadius). Scans sessions in order, replacing the
+-- pick only on a strictly nearer center, so ties are deterministic.
+function AuctionClient.NearestSession()
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return nil, false
+	end
+	local best, bestD2 = nil, nil
+	for idx = 1, 2 do
+		local snap = snapshots[idx]
+		local center = snap and snap.bidCenter
+		if typeof(center) == "table" then
+			local radius = snap.bidRadius or GameConfig.BidRadius
+			local dx = root.Position.X - (tonumber(center.x) or 0)
+			local dz = root.Position.Z - (tonumber(center.z) or 0)
+			local d2 = dx * dx + dz * dz
+			if d2 <= radius * radius and (bestD2 == nil or d2 < bestD2) then
+				best, bestD2 = idx, d2
+			end
+		end
+	end
+	return best, best ~= nil
 end
 
 return AuctionClient
