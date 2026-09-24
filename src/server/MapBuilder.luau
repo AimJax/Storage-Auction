@@ -20,9 +20,11 @@
 --         UnitBounds (Part marker, optional — falls back to unit extents)
 --         ReturnPoint (Part marker, REQUIRED — safety-eject destination)
 --     → StorageUnit2 (Model)
---         Same required structure as StorageUnit. Hosts every other auction;
---         validated identically (see getUnitHandles). ContainerIds must be
---         unique across units (box_4+), so pregenerated loot never collides.
+--         Same required structure as StorageUnit, validated identically
+--         (see getUnitHandles). ContainerIds must be unique across units
+--         (box_4+), so pregenerated loot never collides.
+--     → StorageUnit3 (Model)
+--         Same required structure as StorageUnit (ContainerIds box_7+).
 --     → AuctionArea (Model, optional container)
 --         BidCenter (Part marker, REQUIRED — bid-radius center for Unit 1)
 --         Mat (Part, optional)
@@ -30,6 +32,9 @@
 --     → AuctionArea2 (Model, optional container)
 --         BidCenter (Part marker, REQUIRED — bid-radius center for Unit 2)
 --         ... same optional structure as AuctionArea, translated near Unit 2.
+--     → AuctionArea3 (Model, optional container)
+--         BidCenter (Part marker, REQUIRED — bid-radius center for Unit 3)
+--         ... same optional structure as AuctionArea, translated near Unit 3.
 --     → SpawnLocation (optional — engine-owned; warned if absent)
 --     → WarehouseTemplate (Model, optional — cloned per player at runtime;
 --         warned if absent, warehouses/displays degrade gracefully)
@@ -43,11 +48,13 @@ local MapBuilder = {}
 local MAP_NAME = "StorageAuctionMap"
 local UNIT_NAME = "StorageUnit"
 local AREA_NAME = "AuctionArea"
--- Second physical unit: faithful duplicate, nearby offset. Both units are
--- REQUIRED; a stale place missing StorageUnit2 fails clearly (re-sync the
--- map from the filesystem with Argon SERVER priority, then Play again).
+-- Physical auction units: faithful duplicates at nearby offsets. All units
+-- are REQUIRED; a stale place missing one fails clearly (re-sync the map
+-- from the filesystem with Argon SERVER priority, then Play again).
 local UNIT2_NAME = "StorageUnit2"
 local AREA2_NAME = "AuctionArea2"
+local UNIT3_NAME = "StorageUnit3"
+local AREA3_NAME = "AuctionArea3"
 local SEATS_NAME = "Seats"
 
 local function failMissing(list)
@@ -88,7 +95,7 @@ local function standardPrompt(box, index)
 end
 
 -- Per-unit discovery + validation + runtime stealth. Shared by every
--- physical auction unit so Unit 1 and Unit 2 behave identically.
+-- physical auction unit so all units behave identically.
 -- Appends to the caller's shared `missing` list (reported once afterwards).
 -- Returns the per-unit handles table consumed by ALL behavior functions
 -- below, or nil when required pieces are absent (caller fails clearly).
@@ -253,17 +260,26 @@ function MapBuilder.GetHandles()
 		return inst
 	end
 
-	-- Both physical units validate through the same builder: identical
+	-- Every physical unit validates through the same builder: identical
 	-- structure, identical behavior. Absences accumulate in `missing`.
+	-- Generic table: adding a unit is one line, no special cases.
+	local unitDefs = {
+		{ UNIT_NAME, AREA_NAME },
+		{ UNIT2_NAME, AREA2_NAME },
+		{ UNIT3_NAME, AREA3_NAME },
+	}
 	local units = {}
-	units[1] = getUnitHandles(map, UNIT_NAME, AREA_NAME, req, missing)
-	units[2] = getUnitHandles(map, UNIT2_NAME, AREA2_NAME, req, missing)
+	for i, def in ipairs(unitDefs) do
+		units[i] = getUnitHandles(map, def[1], def[2], req, missing)
+	end
 
 	if #missing > 0 then
 		failMissing(missing)
 	end
-	if units[1] == nil or units[2] == nil then
-		failMissing({ MAP_NAME .. ".StorageUnit + StorageUnit2 (both auction units are required)" })
+	for i, _ in ipairs(unitDefs) do
+		if units[i] == nil then
+			failMissing({ MAP_NAME .. ".StorageUnit + StorageUnit2 + StorageUnit3 (all auction units are required)" })
+		end
 	end
 
 	-- Optional pieces: use when present, ignore when absent.
@@ -285,8 +301,8 @@ function MapBuilder.GetHandles()
 	return {
 		Map = map,
 		WarehouseTemplate = warehouseTemplate, -- Model or nil
-		-- Per-unit handles; AuctionService rotates the active unit 1 -> 2.
-		Units = units, -- [1] StorageUnit, [2] StorageUnit2
+		-- Per-unit handles; AuctionService runs one session per unit.
+		Units = units, -- [1] StorageUnit, [2] StorageUnit2, [3] StorageUnit3
 	}
 end
 

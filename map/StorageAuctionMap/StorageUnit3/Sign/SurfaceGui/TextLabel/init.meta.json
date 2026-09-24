@@ -1,0 +1,18 @@
+{
+  "className": "TextLabel",
+  "properties": {
+    "BackgroundColor3": [0.1569, 0.1569, 0.1765],
+    "BorderSizePixel": 0,
+    "FontFace": {
+      "cachedFaceId": null,
+      "family": "rbxasset://fonts/families/GothamSSm.json",
+      "style": "Normal",
+      "weight": "Bold"
+    },
+    "Size": [[1.0, 0.0], [1.0, 0.0]],
+    "Text": "STORAGE UNIT 3",
+    "TextColor3": [1, 1, 1],
+    "TextScaled": true,
+    "TextWrapped": true
+  }
+}

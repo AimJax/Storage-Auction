@@ -23,9 +23,17 @@ local function blankSnapshot()
 end
 
 -- One snapshot per session; the server broadcasts each with its unitIndex.
-local snapshots = { [1] = blankSnapshot(), [2] = blankSnapshot() }
-local prevStates = { [1] = "Waiting", [2] = "Waiting" }
-local lastSeenBid = { [1] = -1, [2] = -1 }
+-- SESSION_COUNT is the only knob for adding a unit client-side: tables are
+-- built by loop and all scans below iterate 1..SESSION_COUNT.
+local SESSION_COUNT = 3
+local snapshots = {}
+local prevStates = {}
+local lastSeenBid = {}
+for i = 1, SESSION_COUNT do
+	snapshots[i] = blankSnapshot()
+	prevStates[i] = "Waiting"
+	lastSeenBid[i] = -1
+end
 -- Session the local player is currently interacting with (nearest center
 -- inside its radius), or nil when near neither. Pure UX; server validates.
 local nearUnit = nil
@@ -72,7 +80,7 @@ function AuctionClient.Start()
 
 	local function handleSessionData(data)
 		local idx = tonumber(data.unitIndex)
-		if idx ~= 1 and idx ~= 2 then
+		if idx == nil or idx < 1 or idx > SESSION_COUNT then
 			return
 		end
 		local prevState = prevStates[idx]
@@ -151,7 +159,7 @@ function AuctionClient.Start()
 	getRemote(GameConfig.RemoteNames.ItemRevealed, "RemoteEvent").OnClientEvent:Connect(function(item, unitIndex)
 		if typeof(item) == "table" then
 			local idx = tonumber(unitIndex)
-			revealUnit = if idx == 1 or idx == 2 then idx else nearUnit
+			revealUnit = if idx ~= nil and idx >= 1 and idx <= SESSION_COUNT then idx else nearUnit
 			UIController.ShowReveal(item)
 		end
 	end)
@@ -357,8 +365,8 @@ function AuctionClient.IsWithinBidRadius(snap)
 	return (dx * dx + dz * dz) <= radius * radius
 end
 
--- Returns (unitIndex|nil, inRadius). Scans sessions in order, replacing the
--- pick only on a strictly nearer center, so ties are deterministic.
+-- Returns (unitIndex|nil, inRadius). Scans all sessions in order, replacing
+-- the pick only on a strictly nearer center, so ties are deterministic.
 function AuctionClient.NearestSession()
 	local char = player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -366,7 +374,7 @@ function AuctionClient.NearestSession()
 		return nil, false
 	end
 	local best, bestD2 = nil, nil
-	for idx = 1, 2 do
+	for idx = 1, SESSION_COUNT do
 		local snap = snapshots[idx]
 		local center = snap and snap.bidCenter
 		if typeof(center) == "table" then

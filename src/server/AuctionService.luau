@@ -579,12 +579,12 @@ local function runLoop(s)
 	end
 end
 
--- Stagger between session boot times (seconds). Session 1 starts at once;
--- session 2 waits briefly so the two loops don't open lockstep (better UX,
--- easier manual testing). One-time only: afterwards durations and anti-snipe
--- extensions drift the sessions naturally. NOT a queue — neither session
--- ever waits for the other after boot.
-local BOOT_STAGGER_SECONDS = 6
+-- Stagger between session boot times (seconds): unit N waits (N-1) * 6s, so
+-- the loops don't open lockstep (better UX, easier manual testing).
+-- One-time only: afterwards durations and anti-snipe extensions drift the
+-- sessions naturally. NOT a queue — no session ever waits for another
+-- after boot. Generic over the session count.
+local BOOT_STAGGER_STEP_SECONDS = 6
 
 function AuctionService.Init(deps)
 	EconomyService = deps.EconomyService
@@ -594,17 +594,20 @@ function AuctionService.Init(deps)
 	local topHandles = deps.MapHandles
 	if not topHandles or type(topHandles.Units) ~= "table"
 		or topHandles.Units[1] == nil or topHandles.Units[2] == nil
+		or topHandles.Units[3] == nil
 	then
-		error("[SA] AuctionService needs MapHandles.Units[1] and [2] (see MapBuilder.GetHandles).", 0)
+		error("[SA] AuctionService needs MapHandles.Units[1], [2] and [3] (see MapBuilder.GetHandles).", 0)
 	end
 	Remotes = deps.Remotes
 	PlayerStatsService = deps.PlayerStatsService
 	DisplayService = deps.DisplayService
 
-	Sessions = {
-		[1] = newSession(1, topHandles.Units[1]),
-		[2] = newSession(2, topHandles.Units[2]),
-	}
+	-- One independent session per physical unit. Generic loop: extending to
+	-- another unit is one entry here (plus map + handles).
+	Sessions = {}
+	for i, unitHandles in ipairs(topHandles.Units) do
+		Sessions[i] = newSession(i, unitHandles)
+	end
 
 	-- Wire RemoteFunctions. Clients address a session explicitly by
 	-- unitIndex; the server validates everything against THAT session.
@@ -638,8 +641,8 @@ function AuctionService.Init(deps)
 	end
 
 	-- ProximityPrompt path (server-authoritative, no client trust needed).
-	-- Each prompt closure captures its OWN session: a prompt inside
-	-- StorageUnit2 can never read or mutate Unit 1 state.
+	-- Each prompt closure captures its OWN session: a prompt inside one
+	-- unit can never read or mutate another unit's state.
 	for _, s in pairs(Sessions) do
 		for containerId, box in pairs(s.Handles.Containers) do
 			local prompt = box:FindFirstChildOfClass("ProximityPrompt")
@@ -658,13 +661,13 @@ function AuctionService.Init(deps)
 		end
 	end
 
-	-- Both units boot closed/inert; each loop drives its own from here.
+	-- All units boot closed/inert; each loop drives its own from here.
 	for _, s in pairs(Sessions) do
 		resetSession(s)
 		s.State = "Waiting"
+		s.StateEndsAt = now() + GameConfig.WaitingDuration
+			+ (s.UnitIndex - 1) * BOOT_STAGGER_STEP_SECONDS
 	end
-	Sessions[1].StateEndsAt = now() + GameConfig.WaitingDuration
-	Sessions[2].StateEndsAt = now() + GameConfig.WaitingDuration + BOOT_STAGGER_SECONDS
 	for _, s in pairs(Sessions) do
 		task.spawn(runLoop, s)
 	end
