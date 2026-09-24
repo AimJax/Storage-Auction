@@ -174,6 +174,11 @@ local GameConfig = {
 	RecoveryTargetCash = 125,
 	RecoveryCooldown = 300,
 
+	-- Persistence (Stage 5B). Same SA_M1_v1 store, extended schema.
+	PersistSchemaVersion = 1,
+	PersistInventoryLimit = 500, -- max kept items per save; oldest-valid kept first
+	PersistAutosaveInterval = 120, -- seconds between autosaves (loaded players only)
+
 	-- Inspection visibility: how many of the unit's REAL items are shown.
 	-- Weights keyed by visible count; counts above the actual item total are
 	-- ignored. Creates varying risk levels between auctions.

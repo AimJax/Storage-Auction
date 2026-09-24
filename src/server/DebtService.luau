@@ -200,6 +200,39 @@ function DebtService.SetupPlayer(player)
 	end
 end
 
+-- Restore persisted debt state (Stage 5B). Sanitized: debt clamps to >= 0,
+-- recoveryAvailableAt must be a sane non-negative timestamp or 0.
+-- Never touches DataStore; PlayerDataService owns the payload.
+function DebtService.RestorePlayer(player, data)
+	if not player then
+		return
+	end
+	local debt = 0
+	local availableAt = 0
+	if typeof(data) == "table" then
+		debt = math.floor(tonumber(data.debt) or 0)
+		if debt < 0 then
+			debt = 0
+		end
+		availableAt = math.floor(tonumber(data.recoveryAvailableAt) or 0)
+		if availableAt < 0 then
+			availableAt = 0
+		end
+	end
+	states[player.UserId] = { debt = debt, recoveryAvailableAt = availableAt }
+	pushDebtChanged(player)
+end
+
+-- Sanitized snapshot for persistence. No internals leak by reference.
+function DebtService.GetPersistentState(player)
+	local id = if typeof(player) == "Instance" then player.UserId else player
+	local st = states[id]
+	return {
+		debt = (st and math.max(0, math.floor(st.debt or 0))) or 0,
+		recoveryAvailableAt = (st and math.max(0, math.floor(st.recoveryAvailableAt or 0))) or 0,
+	}
+end
+
 function DebtService.ClearPlayer(player)
 	if player then
 		states[player.UserId] = nil

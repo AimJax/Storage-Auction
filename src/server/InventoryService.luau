@@ -5,6 +5,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared.GameConfig)
+local ItemUtils = require(Shared.ItemUtils)
 
 local InventoryService = {}
 
@@ -71,6 +72,29 @@ end
 
 function InventoryService.ClearPlayer(player)
 	inventories[player.UserId] = nil
+end
+
+-- Restore persisted items (Stage 5B). Entries are validated through
+-- ItemUtils.SanitizeItemData (unknown defs/rarities skipped, numerics
+-- clamped); callers pass already-capped lists. Duplicate InstanceIds within
+-- one restore are skipped (never duplicate items). Returns count restored.
+function InventoryService.RestoreItems(player, entries)
+	if not player or typeof(entries) ~= "table" then
+		return 0
+	end
+	inventories[player.UserId] = {}
+	local seen = {}
+	local count = 0
+	for _, entry in ipairs(entries) do
+		local item = ItemUtils.SanitizeItemData(entry)
+		if item and not seen[item.InstanceId] then
+			seen[item.InstanceId] = true
+			table.insert(inventories[player.UserId], item)
+			count += 1
+		end
+	end
+	push(player)
+	return count
 end
 
 return InventoryService

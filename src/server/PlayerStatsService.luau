@@ -65,6 +65,27 @@ function PlayerStatsService.RecordWin(player)
 	PlayerStatsService.Push(player)
 end
 
+function PlayerStatsService.GetWins(player)
+	if not player then
+		return 0
+	end
+	return auctionsWon[player.UserId] or 0
+end
+
+-- Restore persisted win count (sanitized, never negative). Called once at
+-- load; never increments. No persistence logic lives here.
+function PlayerStatsService.RestoreWins(player, count)
+	if not player then
+		return
+	end
+	count = math.floor(tonumber(count) or 0)
+	if count < 0 then
+		count = 0
+	end
+	auctionsWon[player.UserId] = count
+	PlayerStatsService.Push(player)
+end
+
 function PlayerStatsService.ClearPlayer(player)
 	if player then
 		auctionsWon[player.UserId] = nil

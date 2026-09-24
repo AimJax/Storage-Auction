@@ -132,4 +132,60 @@ function ItemUtils.GenerateInstance(rng, opts)
 	}
 end
 
+-- Persistent item form (DATA ONLY, never Instances). Only the fields needed
+-- to restore an item safely: identity + definition ref + rarity/condition +
+-- final value. Name/BaseValue/ModelKey/ConditionName are re-derived from the
+-- canonical ItemDefinitions on restore (never trust stale display strings).
+function ItemUtils.SerializeItem(item)
+	if typeof(item) ~= "table" then
+		return nil
+	end
+	return {
+		InstanceId = item.InstanceId,
+		ItemId = item.ItemId,
+		Rarity = item.Rarity,
+		Condition = item.Condition,
+		FinalValue = item.FinalValue,
+		ModelKey = item.ModelKey,
+	}
+end
+
+-- Validate one stored entry; returns a full runtime item table or nil
+-- (malformed records are skipped, never crash). Definition-gated: unknown
+-- ItemId or Rarity fails; numerics are clamped to legal ranges.
+function ItemUtils.SanitizeItemData(entry)
+	if typeof(entry) ~= "table" then
+		return nil
+	end
+	if typeof(entry.InstanceId) ~= "string" or entry.InstanceId == "" then
+		return nil
+	end
+	local def = nil
+	if typeof(entry.ItemId) == "string" then
+		def = ItemDefinitions.GetById(entry.ItemId)
+	end
+	if not def then
+		return nil
+	end
+	if typeof(entry.Rarity) ~= "string" or RarityConfig.Definitions[entry.Rarity] == nil then
+		return nil
+	end
+	local condition = math.clamp(math.floor(tonumber(entry.Condition) or 0),
+		GameConfig.MinCondition, GameConfig.MaxCondition)
+	local finalValue = math.clamp(math.floor(tonumber(entry.FinalValue) or 0),
+		GameConfig.MinItemValue, GameConfig.MaxItemValue)
+	return {
+		InstanceId = entry.InstanceId,
+		ItemId = def.Id,
+		Name = def.Name,
+		BaseValue = def.BaseValue,
+		ModelKey = def.ModelKey,
+		Rarity = entry.Rarity,
+		Condition = condition,
+		ConditionName = ItemUtils.ConditionName(condition),
+		FinalValue = finalValue,
+		Modifiers = {},
+	}
+end
+
 return ItemUtils

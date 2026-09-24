@@ -63,7 +63,13 @@ local remotes = ensureRemotes()
 -- 2) Services.
 EconomyService.Init(remotes)
 InventoryService.Init(remotes)
-PlayerDataService.Init(EconomyService, InventoryService)
+PlayerDataService.Init({
+	EconomyService = EconomyService,
+	InventoryService = InventoryService,
+	PlayerStatsService = PlayerStatsService,
+	DebtService = DebtService,
+})
+PlayerDataService.StartAutosave()
 
 -- 3) Map.
 -- 3) Map: Studio-authored. Errors clearly if StorageAuctionMap is missing
@@ -144,6 +150,8 @@ local function onPlayerAdded(player)
 end
 
 local function onPlayerRemoving(player)
+	-- ORDER IS LOAD-BEARING: snapshot + save FIRST while every service still
+	-- holds runtime state (debt, inventory, wins, cash), and only then clear.
 	PlayerDataService.Save(player)
 	PlotService.ReleasePlot(player)
 	AuctionService.ClearPlayer(player)
@@ -152,6 +160,7 @@ local function onPlayerRemoving(player)
 	InventoryService.ClearPlayer(player)
 	EconomyService.ClearPlayer(player)
 	DebtService.ClearPlayer(player)
+	PlayerDataService.ClearPlayer(player)
 end
 
 Players.PlayerAdded:Connect(onPlayerAdded)
