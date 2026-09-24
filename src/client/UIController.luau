@@ -413,6 +413,107 @@ function UIController.Build()
 	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.KeepButton)
 	refs.RevealFrame = reveal
 
+	-- ATM panel: compact, center, hidden by default. Cash + debt + fixed
+	-- loan offers + recovery. Buttons only send IDs/actions; the server
+	-- validates everything and returns fresh state for re-render.
+	local atm = mk("Frame", {
+		Name = "ATM",
+		Size = UDim2.new(0, 280, 0, 330),
+		Position = UDim2.new(0.5, -140, 0.5, -165),
+		BackgroundColor3 = Color3.fromRGB(22, 22, 30),
+		BackgroundTransparency = 0.05,
+		Visible = false,
+	}, gui)
+	mk("UICorner", { CornerRadius = UDim.new(0, 10) }, atm)
+	mk("UIStroke", { Color = Color3.fromRGB(40, 200, 130), Thickness = 1 }, atm)
+	mk("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 26),
+		BackgroundTransparency = 1,
+		Text = "AUCTION ATM",
+		TextColor3 = Color3.fromRGB(120, 230, 170),
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+	}, atm)
+	refs.ATMCashLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 20),
+		Position = UDim2.new(0, 8, 0, 28),
+		BackgroundTransparency = 1,
+		Text = "Cash: $0",
+		TextColor3 = Color3.fromRGB(255, 225, 130),
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, atm)
+	refs.ATMDebtLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 20),
+		Position = UDim2.new(0, 8, 0, 48),
+		BackgroundTransparency = 1,
+		Text = "Debt: $0",
+		TextColor3 = Color3.fromRGB(255, 150, 150),
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, atm)
+	refs.ATMLoanButtons = {}
+	refs.ATMLoanLabels = {}
+	for i = 1, 3 do
+		local y = 70 + (i - 1) * 52
+		local btn = mk("TextButton", {
+			Size = UDim2.new(0, 120, 0, 30),
+			Position = UDim2.new(0, 8, 0, y),
+			BackgroundColor3 = Color3.fromRGB(40, 130, 85),
+			Text = "LOAN",
+			TextColor3 = Color3.new(1, 1, 1),
+			Font = Enum.Font.GothamBold,
+			TextSize = 14,
+		}, atm)
+		mk("UICorner", { CornerRadius = UDim.new(0, 8) }, btn)
+		refs.ATMLoanButtons[i] = btn
+		refs.ATMLoanLabels[i] = mk("TextLabel", {
+			Size = UDim2.new(1, -136, 0, 30),
+			Position = UDim2.new(0, 132, 0, y),
+			BackgroundTransparency = 1,
+			Text = "",
+			TextColor3 = Color3.fromRGB(200, 200, 205),
+			Font = Enum.Font.Gotham,
+			TextSize = 11,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, atm)
+	end
+	refs.ATMRecoveryButton = mk("TextButton", {
+		Size = UDim2.new(0, 120, 0, 30),
+		Position = UDim2.new(0, 8, 0, 226),
+		BackgroundColor3 = Color3.fromRGB(70, 110, 180),
+		Text = "RECOVER",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+	}, atm)
+	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.ATMRecoveryButton)
+	refs.ATMRecoveryLabel = mk("TextLabel", {
+		Size = UDim2.new(1, -136, 0, 30),
+		Position = UDim2.new(0, 132, 0, 226),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = Color3.fromRGB(200, 200, 205),
+		Font = Enum.Font.Gotham,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, atm)
+	refs.ATMCloseButton = mk("TextButton", {
+		Size = UDim2.new(1, -16, 0, 32),
+		Position = UDim2.new(0, 8, 0, 288),
+		BackgroundColor3 = Color3.fromRGB(50, 55, 70),
+		Text = "CLOSE",
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+	}, atm)
+	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, refs.ATMCloseButton)
+	refs.ATMFrame = atm
+
 	return refs
 end
 
@@ -578,6 +679,71 @@ local function plural(n, one, many)
 		return "1 " .. one
 	end
 	return tostring(tonumber(n) or 0) .. " " .. many
+end
+
+-- ATM panel render. `state` is the server GetATMState payload (or nil to
+-- just hide). Loan buttons show locked reasons; recovery shows grant or
+-- cooldown/eligibility. Pure render — all decisions are server-side.
+function UIController.ShowATM(state)
+	if not refs.ATMFrame then
+		return
+	end
+	refs.ATMFrame.Visible = true
+	if state then
+		UIController.RefreshATM(state)
+	end
+end
+
+function UIController.HideATM()
+	if refs.ATMFrame then
+		refs.ATMFrame.Visible = false
+	end
+end
+
+function UIController.IsATMVisible()
+	return refs.ATMFrame and refs.ATMFrame.Visible or false
+end
+
+function UIController.RefreshATM(state)
+	if not refs.ATMFrame or typeof(state) ~= "table" then
+		return
+	end
+	refs.ATMCashLabel.Text = "Cash: $" .. formatMoney(state.cash or 0)
+	refs.ATMDebtLabel.Text = "Debt: $" .. formatMoney(state.debt or 0)
+	for i, loan in ipairs(state.loans or {}) do
+		local btn = (refs.ATMLoanButtons or {})[i]
+		local lab = (refs.ATMLoanLabels or {})[i]
+		if btn then
+			btn.Text = string.format("LOAN %s: $%s", tostring(loan.id), formatMoney(loan.borrow or 0))
+			btn.Active = loan.eligible ~= false
+			btn.AutoButtonColor = loan.eligible ~= false
+			btn.BackgroundColor3 = if loan.eligible ~= false
+				then Color3.fromRGB(40, 130, 85)
+				else Color3.fromRGB(70, 70, 80)
+		end
+		if lab then
+			if loan.eligible ~= false then
+				lab.Text = string.format("repay $%s", formatMoney(loan.repay or 0))
+			else
+				lab.Text = tostring(loan.reason or "Locked")
+			end
+		end
+	end
+	local rec = state.recovery or {}
+	if refs.ATMRecoveryButton then
+		refs.ATMRecoveryButton.Active = rec.eligible == true
+		refs.ATMRecoveryButton.AutoButtonColor = rec.eligible == true
+		refs.ATMRecoveryButton.BackgroundColor3 = if rec.eligible == true
+			then Color3.fromRGB(70, 110, 180)
+			else Color3.fromRGB(70, 70, 80)
+	end
+	if refs.ATMRecoveryLabel then
+		if rec.eligible == true then
+			refs.ATMRecoveryLabel.Text = string.format("grant $%s", formatMoney(rec.grant or 0))
+		else
+			refs.ATMRecoveryLabel.Text = tostring(rec.reason or "")
+		end
+	end
 end
 
 function UIController.UpdateInspection(inspection)

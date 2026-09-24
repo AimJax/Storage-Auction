@@ -1,0 +1,11 @@
+{
+  "className": "ProximityPrompt",
+  "properties": {
+    "ActionText": "Use ATM",
+    "Enabled": true,
+    "HoldDuration": 0.3,
+    "MaxActivationDistance": 10,
+    "ObjectText": "Auction ATM",
+    "RequiresLineOfSight": false
+  }
+}

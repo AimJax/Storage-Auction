@@ -332,6 +332,87 @@ function AuctionClient.Start()
 	refs.SlotCloseBtn.MouseButton1Click:Connect(function()
 		UIController.HideSlotPicker()
 	end)
+
+	-- ATM: server owns all state; client only sends loan IDs / actions and
+	-- renders the returned state.
+	local lastATMState = nil
+	local function refreshATM()
+		local fn = getRemote(GameConfig.RemoteNames.GetATMState, "RemoteFunction")
+		if not fn then
+			return
+		end
+		local ok, res = pcall(function()
+			return fn:InvokeServer()
+		end)
+		if ok and typeof(res) == "table" and res.ok and typeof(res.state) == "table" then
+			lastATMState = res.state
+			UIController.RefreshATM(res.state)
+		end
+	end
+	getRemote(GameConfig.RemoteNames.ATMOpened, "RemoteEvent").OnClientEvent:Connect(function()
+		UIController.ShowATM(nil)
+		refreshATM()
+	end)
+	getRemote(GameConfig.RemoteNames.DebtChanged, "RemoteEvent").OnClientEvent:Connect(function()
+		if UIController.IsATMVisible() then
+			refreshATM()
+		end
+	end)
+	for i, btn in ipairs(refs.ATMLoanButtons or {}) do
+		local loanIdx = i
+		btn.MouseButton1Click:Connect(function()
+			local loans = lastATMState and lastATMState.loans
+			local entry = loans and loans[loanIdx]
+			if not entry then
+				return
+			end
+			local fn = getRemote(GameConfig.RemoteNames.TakeLoan, "RemoteFunction")
+			if not fn then
+				return
+			end
+			local ok, res = pcall(function()
+				return fn:InvokeServer(entry.id)
+			end)
+			if ok and typeof(res) == "table" then
+				UIController.ShowToast(tostring(res.message))
+				if typeof(res.state) == "table" then
+					lastATMState = res.state
+					UIController.RefreshATM(res.state)
+				end
+			else
+				UIController.ShowToast("Loan failed")
+			end
+		end)
+	end
+	if refs.ATMRecoveryButton then
+		refs.ATMRecoveryButton.MouseButton1Click:Connect(function()
+			local fn = getRemote(GameConfig.RemoteNames.ClaimRecovery, "RemoteFunction")
+			if not fn then
+				return
+			end
+			local ok, res = pcall(function()
+				return fn:InvokeServer()
+			end)
+			if ok and typeof(res) == "table" then
+				if res.ok then
+					UIController.ShowToast("Recovery grant: $" .. formatMoney(tonumber(res.result) or 0))
+				else
+					UIController.ShowToast(tostring(res.result))
+				end
+				if typeof(res.state) == "table" then
+					lastATMState = res.state
+					UIController.RefreshATM(res.state)
+				end
+			else
+				UIController.ShowToast("Recovery failed")
+			end
+		end)
+	end
+	if refs.ATMCloseButton then
+		refs.ATMCloseButton.MouseButton1Click:Connect(function()
+			UIController.HideATM()
+		end)
+	end
 	-- Local proximity check across BOTH sessions (UX only; server validates).
 	-- Picks the nearest BidCenter inside its radius; overlapping zones
 	-- resolve deterministically to the nearer unit (ties keep unit 1).

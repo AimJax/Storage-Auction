@@ -157,6 +157,23 @@ local GameConfig = {
 	NPCReactionPause = 0.9,  -- seconds after any bid before NPCs may respond
 	AvgHiddenItemValue = 200, -- baseline each hidden box is worth to NPC guessers
 
+	-- ATM loans (Stage 5A, runtime-only). Fixed offers, one active loan max.
+	-- Debt = RemainingDebt (the Repay amount). No interest over time.
+	Loans = {
+		A = { Borrow = 250, Repay = 300, MinWins = 0, MinNetWorth = 0 },
+		B = { Borrow = 500, Repay = 625, MinWins = 2, MinNetWorth = 1500 },
+		C = { Borrow = 1000, Repay = 1300, MinWins = 5, MinNetWorth = 5000 },
+	},
+	LoanOrder = { "A", "B", "C" },
+	-- Fraction of each item-sale gross auto-routed to debt (never overpays).
+	DebtRepaymentRate = 0.25,
+
+	-- Bankruptcy safety: cash below Threshold may claim a top-up to target,
+	-- at most once per Cooldown seconds (os.time wall clock; persistable later).
+	RecoveryThreshold = 50,
+	RecoveryTargetCash = 125,
+	RecoveryCooldown = 300,
+
 	-- Inspection visibility: how many of the unit's REAL items are shown.
 	-- Weights keyed by visible count; counts above the actual item total are
 	-- ignored. Creates varying risk levels between auctions.
@@ -192,6 +209,11 @@ local GameConfig = {
 		OpenContainer = "OpenContainer",
 		KeepItem = "KeepItem",
 		SellItem = "SellItem",
+		GetATMState = "GetATMState",
+		TakeLoan = "TakeLoan",
+		ClaimRecovery = "ClaimRecovery",
+		ATMOpened = "ATMOpened",
+		DebtChanged = "DebtChanged",
 		DisplayItem = "DisplayItem",
 		RemoveDisplay = "RemoveDisplay",
 	},

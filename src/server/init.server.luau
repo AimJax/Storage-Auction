@@ -18,6 +18,7 @@ local DisplayService = require(script.DisplayService)
 local PlayerStatsService = require(script.PlayerStatsService)
 local PlotService = require(script.PlotService)
 local WarehouseService = require(script.WarehouseService)
+local DebtService = require(script.DebtService)
 
 -- 1) Remotes (created at runtime so Studio needs zero manual setup).
 local function ensureRemotes()
@@ -41,6 +42,11 @@ local function ensureRemotes()
 		{ GameConfig.RemoteNames.SellItem, "RemoteFunction" },
 		{ GameConfig.RemoteNames.DisplayItem, "RemoteFunction" },
 		{ GameConfig.RemoteNames.RemoveDisplay, "RemoteFunction" },
+		{ GameConfig.RemoteNames.GetATMState, "RemoteFunction" },
+		{ GameConfig.RemoteNames.TakeLoan, "RemoteFunction" },
+		{ GameConfig.RemoteNames.ClaimRecovery, "RemoteFunction" },
+		{ GameConfig.RemoteNames.ATMOpened, "RemoteEvent" },
+		{ GameConfig.RemoteNames.DebtChanged, "RemoteEvent" },
 	}
 	for _, d in ipairs(defs) do
 		if not folder:FindFirstChild(d[1]) then
@@ -74,6 +80,15 @@ AuctionService.Init({
 	Remotes = remotes,
 	PlayerStatsService = PlayerStatsService,
 	DisplayService = DisplayService,
+	DebtService = DebtService,
+})
+
+-- 4b) Runtime ATM loans/debt/recovery (no persistence in Stage 5A).
+DebtService.Init({
+	EconomyService = EconomyService,
+	PlayerStatsService = PlayerStatsService,
+	Remotes = remotes,
+	ATMPrompt = mapHandles.ATM,
 })
 
 -- 5) Showroom displays + progression stats (depend on services above).
@@ -101,6 +116,7 @@ WarehouseService.Init({
 -- 7) Players.
 local function onPlayerAdded(player)
 	PlayerDataService.Load(player)
+	DebtService.SetupPlayer(player)
 	-- NOTE: no auto plot assignment. Players claim a plot manually at its
 	-- sign ("Claim Plot", E). See PlotService.ClaimPlot.
 	-- Send initial snapshot shortly after spawn so UI populates.
@@ -135,6 +151,7 @@ local function onPlayerRemoving(player)
 	PlayerStatsService.ClearPlayer(player)
 	InventoryService.ClearPlayer(player)
 	EconomyService.ClearPlayer(player)
+	DebtService.ClearPlayer(player)
 end
 
 Players.PlayerAdded:Connect(onPlayerAdded)

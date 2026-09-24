@@ -26,6 +26,7 @@ local MapBuilder = nil
 local Remotes = nil
 local PlayerStatsService = nil
 local DisplayService = nil
+local DebtService = nil
 
 -- Sessions own ALL mutable auction state. Nothing auction-related lives in
 -- module globals (only service refs + the session list itself).
@@ -395,7 +396,8 @@ end
 -- Resolve the pending decision as SELL within one session: FinalValue
 -- straight to Cash, never into the inventory. Falls back to selling an owned
 -- Bag item so the remote keeps its original contract. Server looks up all
--- values itself.
+-- values itself. Both paths split proceeds via DebtService (25% to debt).
+-- Returns (ok, cashAdded).
 function AuctionService.TrySellItem(unitIndex, player, instanceId)
 	local s, err = resolveSession(unitIndex)
 	if not s then
@@ -404,18 +406,18 @@ function AuctionService.TrySellItem(unitIndex, player, instanceId)
 	local pending = s.PendingByUser[player.UserId]
 	if pending and (instanceId == nil or instanceId == pending.InstanceId) then
 		s.PendingByUser[player.UserId] = nil
-		EconomyService.AddCash(player, pending.FinalValue)
+		local cashAdded = DebtService.ApplySaleProceeds(player, pending.FinalValue)
 		PlayerStatsService.Push(player)
-		return true, pending.FinalValue
+		return true, cashAdded
 	end
 	local removed = InventoryService.RemoveItem(player, instanceId)
 	if not removed then
 		return false, "Item not found in your inventory."
 	end
-	EconomyService.AddCash(player, removed.FinalValue)
+	local cashAdded = DebtService.ApplySaleProceeds(player, removed.FinalValue)
 	DisplayService.OnItemRemoved(player, instanceId)
 	PlayerStatsService.Push(player)
-	return true, removed.FinalValue
+	return true, cashAdded
 end
 
 -- True while the session winner still owes a Sell/Keep decision (and is
@@ -677,6 +679,7 @@ function AuctionService.Init(deps)
 	Remotes = deps.Remotes
 	PlayerStatsService = deps.PlayerStatsService
 	DisplayService = deps.DisplayService
+	DebtService = deps.DebtService
 
 	-- One independent session per physical unit. Tier is fixed per unit:
 	-- Unit 1 = Budget, Unit 2 = Standard, Unit 3 = HighRoller (GameConfig).

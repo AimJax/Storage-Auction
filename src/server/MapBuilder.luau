@@ -298,9 +298,20 @@ function MapBuilder.GetHandles()
 		warn("[SA] No SpawnLocation found; players may spawn at the origin. Add one under " .. MAP_NAME .. ".")
 	end
 
+	-- ATM (optional): single "ATM" Model with a ProximityPrompt. Absence only
+	-- disables loans/recovery UI; auctions and sales run on.
+	local atm = map:FindFirstChild("ATM")
+	if atm and not atm:IsA("Model") then
+		atm = nil
+	end
+	if atm == nil then
+		warn("[SA] No ATM in map; loans/recovery disabled until the map provides one.")
+	end
+
 	return {
 		Map = map,
 		WarehouseTemplate = warehouseTemplate, -- Model or nil
+		ATM = atm, -- Model or nil
 		-- Per-unit handles; AuctionService runs one session per unit.
 		Units = units, -- [1] StorageUnit, [2] StorageUnit2, [3] StorageUnit3
 	}
