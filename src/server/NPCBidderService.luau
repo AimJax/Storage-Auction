@@ -31,10 +31,13 @@ end
 
 -- npcDefs: GameConfig.NPCs. visibleItems: server unit's real visible loot
 -- (FinalValue used internally as appraisal proxy ONLY). hiddenCount: boxes
--- still sealed. Returns per-auction bidder states.
-function NPCBidderService.CreateBidders(npcDefs, visibleItems, hiddenCount)
+-- still sealed. hiddenBaseline: optional per-tier per-box hidden guess
+-- (defaults to GameConfig.AvgHiddenItemValue). Returns per-auction bidder states.
+function NPCBidderService.CreateBidders(npcDefs, visibleItems, hiddenCount, hiddenBaseline, budgetMult)
 	visibleItems = visibleItems or {}
 	hiddenCount = hiddenCount or 0
+	local baseline = tonumber(hiddenBaseline) or GameConfig.AvgHiddenItemValue
+	local budgetScale = tonumber(budgetMult) or 1
 	local rareVisible = hasRarePlus(visibleItems)
 	local bidders = {}
 
@@ -55,7 +58,7 @@ function NPCBidderService.CreateBidders(npcDefs, visibleItems, hiddenCount)
 		local spread = 0.25 + (1 - skill) * 0.9
 		local hiddenGuess = 0
 		if hiddenCount > 0 then
-			local perBox = GameConfig.AvgHiddenItemValue * (0.4 + risk * 0.8)
+			local perBox = baseline * (0.4 + risk * 0.8)
 			hiddenGuess = math.max(0, math.floor(
 				hiddenCount * perBox * rng:NextNumber(math.max(0.05, 1 - spread), 1 + spread) + 0.5))
 		end
@@ -65,7 +68,9 @@ function NPCBidderService.CreateBidders(npcDefs, visibleItems, hiddenCount)
 		if rng:NextNumber() < (tonumber(def.OverpayChance) or 0) then
 			maxBid = math.floor(maxBid * 1.18 + 0.5)
 		end
-		maxBid = math.min(maxBid, math.floor(tonumber(def.Budget) or maxBid))
+		-- Tier-scaled house budget cap (isolated: personalities untouched).
+		local budget = math.floor((tonumber(def.Budget) or maxBid) * budgetScale)
+		maxBid = math.min(maxBid, budget)
 		if maxBid < 0 then
 			maxBid = 0
 		end
@@ -87,7 +92,7 @@ function NPCBidderService.CreateBidders(npcDefs, visibleItems, hiddenCount)
 			HiddenGuess = hiddenGuess,
 			EstimatedValue = estimated,
 			MaxBid = maxBid,
-			Budget = tonumber(def.Budget) or maxBid,
+			Budget = budget,
 			Aggression = tonumber(def.Aggression) or 0.5,
 			BidChance = tonumber(def.BidChance) or 0.5,
 			MaxDelay = tonumber(def.MaxDelay) or 3.0,
@@ -150,13 +155,16 @@ end
 -- performs the bid through the same server path as human bids. lastBidAt gates
 -- a reaction pause; only one NPC tends to answer per tick (dampened chains).
 -- activeHumans scales all pressure down (PvP takes over); timeLeft drives
--- late-bid suppression; highestIsHuman gates it. Returns updated currentBid.
-function NPCBidderService.Tick(bidders, now, currentBid, currentBidderName, lastBidAt, activeHumans, timeLeft, highestIsHuman, tryBid)
+-- late-bid suppression; highestIsHuman gates it. pressureMult (optional,
+-- default 1) scales tier filler presence without changing any personality.
+-- Returns updated currentBid.
+function NPCBidderService.Tick(bidders, now, currentBid, currentBidderName, lastBidAt, activeHumans, timeLeft, highestIsHuman, tryBid, pressureMult)
 	if now - (lastBidAt or -1000) < GameConfig.NPCReactionPause then
 		return currentBid -- let the last bid breathe; no instant chains
 	end
 	activeHumans = math.max(0, math.floor(tonumber(activeHumans) or 0))
-	local pressure = GameConfig.NPCPressureByHumans[math.min(activeHumans, 3)] or 0.1
+	local pressure = (GameConfig.NPCPressureByHumans[math.min(activeHumans, 3)] or 0.1)
+		* (tonumber(pressureMult) or 1)
 	highestIsHuman = highestIsHuman == true
 	local answeredThisTick = false
 	for _, b in ipairs(bidders) do

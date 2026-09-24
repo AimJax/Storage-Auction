@@ -487,7 +487,11 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 	end
 
 	if refs.StateLabel then
-		refs.StateLabel.Text = string.upper(state) .. " · " .. tostring(snapshot.timeLeft or 0) .. "s"
+		local tierName = tostring(snapshot.tierDisplayName or "")
+		local timeText = tostring(snapshot.timeLeft or 0) .. "s"
+		refs.StateLabel.Text = if tierName ~= ""
+			then tierName .. " · " .. string.upper(state) .. " · " .. timeText
+			else string.upper(state) .. " · " .. timeText
 	end
 	if refs.BidLabel then
 		local function tag(name, kind)
@@ -529,12 +533,14 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 	end
 
 	if transitioned or state == "Rummaging" or state == "Bidding" then
+		local tierReq = snapshot.tierRequirement
+		local reqSuffix = if tierReq ~= nil and tierReq ~= "" then " (" .. tostring(tierReq) .. ")" else ""
 		if not showAuction then
 			setHint(nil)
 		elseif state == "Inspection" then
-			setHint("Inspect the unit before bidding begins")
+			setHint("Inspect the unit before bidding begins" .. reqSuffix)
 		elseif state == "Bidding" then
-			setHint("Outbid your rivals to win the unit")
+			setHint("Outbid your rivals to win the unit" .. reqSuffix)
 		elseif state == "Rummaging" then
 			if snapshot.winner == localPlayerName then
 				setHint("You won! Walk in and press E on each box")

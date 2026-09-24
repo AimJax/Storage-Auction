@@ -9,7 +9,67 @@ local GameConfig = {
 	MaxCash = 999999999,
 
 	-- Auction rules
-	BidStartPrice = 50,
+	BidStartPrice = 50, -- legacy global default; per-session tier StartingBid is used (see Tiers)
+
+	-- Auction tiers (Stage 4). Tier is a permanent PROPERTY of a physical
+	-- unit/session: Unit 1 = Budget, Unit 2 = Standard, Unit 3 = HighRoller.
+	-- UnitTiers[i] assigns the tier for Sessions[i]. No rotation, no queue.
+	UnitTiers = { "Budget", "Standard", "HighRoller" },
+
+	-- Per-tier tuning. QualityWeights replace the global UnitQuality.Weights
+	-- for that tier's rolls (UnitGeneratorService consumes them explicitly).
+	-- JunkChanceMult multiplies the quality JunkChance (clamped 0..1);
+	-- LuckBonus adds to the quality RarityLuck; ValueScaleMin/Max multiply
+	-- the quality ValueScale range (single roll over the combined range).
+	-- StartingBid is the session's opening bid. MinCash/MinWins/MinNetWorth
+	-- gate HUMAN bidding (server-enforced; NPCs are house bots, ungated).
+	-- NPCPressureMult scales the existing filler pressure (1.0 = unchanged).
+	Tiers = {
+		Budget = {
+			DisplayName = "BUDGET",
+			MessageName = "Budget",
+			StartingBid = 25,
+			MinCash = 0, MinWins = 0, MinNetWorth = 0,
+			NPCPressureMult = 0.85,
+			-- Minimal tier-aware NPC calibration (both proven necessary by sim):
+			-- NPCHiddenGuess tracks the tier's hidden value level; NPCBudgetMult
+			-- scales house budgets to the tier's price level (HR units trade in
+			-- thousands; unscaled $400-900 caps left HR uncontested above ~$900).
+			-- Estimators stay clue-based, noisy, and capped — still filler.
+			NPCHiddenGuess = 125,
+			NPCBudgetMult = 1.0,
+			QualityWeights = { Trash = 29, Low = 35, Average = 25, Good = 8, Premium = 2, Jackpot = 1 },
+			JunkChanceMult = 1.50, LuckBonus = 0,
+			ValueScaleMin = 0.60, ValueScaleMax = 1.00,
+			RequirementText = nil, -- open to everyone
+		},
+		Standard = {
+			DisplayName = "STANDARD",
+			MessageName = "Standard",
+			StartingBid = 100,
+			MinCash = 300, MinWins = 0, MinNetWorth = 0,
+			NPCPressureMult = 1.00,
+			NPCHiddenGuess = 350,
+			NPCBudgetMult = 1.0,
+			QualityWeights = { Trash = 10, Low = 22, Average = 33, Good = 20, Premium = 12, Jackpot = 3 },
+			JunkChanceMult = 1.00, LuckBonus = 0,
+			ValueScaleMin = 0.80, ValueScaleMax = 1.30,
+			RequirementText = "Requires $300 Cash",
+		},
+		HighRoller = {
+			DisplayName = "HIGH ROLLER",
+			MessageName = "High Roller",
+			StartingBid = 500,
+			MinCash = 2500, MinWins = 3, MinNetWorth = 5000,
+			NPCPressureMult = 1.00,
+			NPCHiddenGuess = 900,
+			NPCBudgetMult = 3.0,
+			QualityWeights = { Trash = 3, Low = 10, Average = 27, Good = 30, Premium = 22, Jackpot = 8 },
+			JunkChanceMult = 0.40, LuckBonus = 2,
+			ValueScaleMin = 1.20, ValueScaleMax = 2.00,
+			RequirementText = "Requires $2,500 Cash + 3 wins or $5,000 net worth",
+		},
+	},
 
 	-- Price-tiered minimum increments (single source; no hard-coded math).
 	BidIncrementTiers = {

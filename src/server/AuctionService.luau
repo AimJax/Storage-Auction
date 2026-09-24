@@ -35,10 +35,21 @@ local function now()
 	return os.clock()
 end
 
-local function newSession(unitIndex, handles)
+local function newSession(unitIndex, handles, tierId)
+	-- Tier is a permanent property of the physical unit (Unit 1 = Budget,
+	-- Unit 2 = Standard, Unit 3 = HighRoller). Copy the config so the
+	-- shared table is never mutated; TierId tags generated loot.
+	local tierDef = GameConfig.Tiers[tierId]
+	assert(tierDef ~= nil, "[SA] Unknown tier: " .. tostring(tierId))
+	local tier = { TierId = tierId }
+	for k, v in pairs(tierDef) do
+		tier[k] = v
+	end
 	return {
 		UnitIndex = unitIndex,
 		Handles = handles,
+		TierId = tierId,
+		Tier = tier,
 		State = "Waiting",
 		StateEndsAt = now() + GameConfig.WaitingDuration,
 		CurrentBid = 0,
@@ -108,6 +119,9 @@ local function snapshotOf(s)
 	local center = s.Handles and s.Handles.BidCenter
 	return {
 		unitIndex = s.UnitIndex,
+		tierId = s.TierId,
+		tierDisplayName = s.Tier.DisplayName or s.TierId,
+		tierRequirement = s.Tier.RequirementText, -- static text or nil; UX only
 		state = s.State,
 		timeLeft = math.floor(timeLeft(s) + 0.5),
 		currentBid = s.CurrentBid,
@@ -164,7 +178,8 @@ local function pregenerateContents(s)
 	end
 	-- The unit (hidden loot + visible clues + true total) is fixed NOW.
 	-- Rummaging later reveals these exact instances, never rerolls.
-	s.CurrentUnit = UnitGeneratorService.GenerateUnit(rng, ids)
+	-- The session tier flows into generation (weights/junk/luck/scale).
+	s.CurrentUnit = UnitGeneratorService.GenerateUnit(rng, ids, s.Tier)
 	for _, entry in ipairs(s.CurrentUnit.Containers) do
 		s.ContainerItems[entry.ContainerId] = entry.Items[1]
 	end
@@ -172,7 +187,7 @@ local function pregenerateContents(s)
 end
 
 local function resetSession(s)
-	s.CurrentBid = GameConfig.BidStartPrice
+	s.CurrentBid = s.Tier.StartingBid
 	s.CurrentBidder = ""
 	s.CurrentBidderType = ""
 	s.CurrentBidderUserId = nil
@@ -206,6 +221,52 @@ local function applyAntiSnipe(s)
 	end
 end
 
+-- NetWorth (runtime only, no new persistence): Cash + sum of FinalValue
+-- over currently KEPT inventory items (= PlayerStatsService
+-- collectionValue). Never includes temporary bids, plots, or debt (none).
+local function netWorthOf(player)
+	local cash = EconomyService.GetCash(player)
+	local stats = PlayerStatsService.GetStats(player)
+	return cash + (tonumber(stats.collectionValue) or 0), cash, stats
+end
+
+local function formatCash(n)
+	n = math.floor(tonumber(n) or 0)
+	local s = tostring(n)
+	local out = ""
+	while #s > 3 do
+		out = "," .. string.sub(s, -3) .. out
+		s = string.sub(s, 1, #s - 3)
+	end
+	return s .. out
+end
+
+-- Tier access gate for HUMAN bidders (NPCs are house bots, ungated).
+-- Budget is open. Standard needs cash; HighRoller needs cash AND
+-- (wins OR net worth). Uses session/runtime stats only — PlayerData schema
+-- untouched. Returns (ok, reason).
+local function tierEligibility(s, player)
+	local tier = s.Tier
+	local netWorth, cash, stats = netWorthOf(player)
+	if cash < (tonumber(tier.MinCash) or 0) then
+		if s.TierId == "HighRoller" then
+			return false, "High Roller requires $2,500 Cash and 3 wins or $5,000 net worth."
+		end
+		return false, string.format("%s auction requires $%s Cash.",
+			tier.MessageName or s.TierId, formatCash(tier.MinCash))
+	end
+	local needWins = tonumber(tier.MinWins) or 0
+	local needWorth = tonumber(tier.MinNetWorth) or 0
+	if needWins <= 0 and needWorth <= 0 then
+		return true, nil
+	end
+	local wins = tonumber(stats.auctionsWon) or 0
+	if wins >= needWins or netWorth >= needWorth then
+		return true, nil
+	end
+	return false, "High Roller requires $2,500 Cash and 3 wins or $5,000 net worth."
+end
+
 -- Internal bid path once the target session is known.
 local function tryBid(s, playerOrNil, amount, isNPC, npcName)
 	if s.State ~= "Bidding" then
@@ -234,6 +295,11 @@ local function tryBid(s, playerOrNil, amount, isNPC, npcName)
 	-- client button is only a UX hint.
 	if not MapBuilder.IsWithinBidRadius(s.Handles, player, GameConfig.BidRadius) then
 		return false, "Move closer to the auction to bid."
+	end
+	-- Tier access (before affordability so the reason is specific).
+	local allowed, reason = tierEligibility(s, player)
+	if not allowed then
+		return false, reason
 	end
 	-- Affordability: cash must cover this bid PLUS any outstanding leading
 	-- bids in the other session (deduct happens only on win; resolution
@@ -477,9 +543,18 @@ local function runLoop(s)
 				s.NpcBidders = NPCBidderService.CreateBidders(
 					GameConfig.NPCs,
 					if s.CurrentUnit then s.CurrentUnit.VisibleItems else {},
-					if s.CurrentUnit then #s.CurrentUnit.HiddenItems else 0)
-				-- Bidding starts at BidStartPrice; first valid bid must exceed it.
-				s.CurrentBid = GameConfig.BidStartPrice - ItemUtils.BidIncrementFor(GameConfig.BidStartPrice)
+					if s.CurrentUnit then #s.CurrentUnit.HiddenItems else 0,
+					s.Tier.NPCHiddenGuess,
+					s.Tier.NPCBudgetMult)
+				-- Bidding opens at exactly the tier StartingBid: back off from the
+				-- increment tier boundary so CurrentBid + inc(CurrentBid) lands
+				-- on StartingBid (e.g. HR 500: 500-250=250 but inc(250)=50 would
+				-- open at $300 — walk up to 450 so the floor is exactly $500).
+				local openBid = s.Tier.StartingBid - ItemUtils.BidIncrementFor(s.Tier.StartingBid)
+				while openBid + ItemUtils.BidIncrementFor(openBid) < s.Tier.StartingBid do
+					openBid += 1
+				end
+				s.CurrentBid = openBid
 				if s.CurrentBid < 0 then
 					s.CurrentBid = 0
 				end
@@ -503,7 +578,8 @@ local function runLoop(s)
 				return ok
 			end
 			NPCBidderService.Tick(s.NpcBidders, t, s.CurrentBid, s.CurrentBidder,
-				s.LastBidTime, activeHumanCount(s), timeLeft(s), s.CurrentBidderType == "Player", npcTryBid)
+				s.LastBidTime, activeHumanCount(s), timeLeft(s), s.CurrentBidderType == "Player", npcTryBid,
+				s.Tier.NPCPressureMult)
 			if timeLeft(s) <= 0 then
 				finishBidding(s)
 			end
@@ -602,11 +678,16 @@ function AuctionService.Init(deps)
 	PlayerStatsService = deps.PlayerStatsService
 	DisplayService = deps.DisplayService
 
-	-- One independent session per physical unit. Generic loop: extending to
-	-- another unit is one entry here (plus map + handles).
+	-- One independent session per physical unit. Tier is fixed per unit:
+	-- Unit 1 = Budget, Unit 2 = Standard, Unit 3 = HighRoller (GameConfig).
+	-- Generic loop: extending to another unit is one entry there (plus map).
 	Sessions = {}
 	for i, unitHandles in ipairs(topHandles.Units) do
-		Sessions[i] = newSession(i, unitHandles)
+		local tierId = GameConfig.UnitTiers[i]
+		if tierId == nil then
+			error("[SA] GameConfig.UnitTiers missing tier for unit " .. tostring(i) .. ".", 0)
+		end
+		Sessions[i] = newSession(i, unitHandles, tierId)
 	end
 
 	-- Wire RemoteFunctions. Clients address a session explicitly by

@@ -14,14 +14,15 @@ local ItemUtils = require(Shared.ItemUtils)
 
 local UnitGeneratorService = {}
 
-local function rollQuality(rng)
-	local weights = GameConfig.UnitQuality.Weights
+local function rollQuality(rng, weights, order)
+	weights = weights or GameConfig.UnitQuality.Weights
+	order = order or GameConfig.UnitQuality.Order
 	local total = 0
-	for _, name in ipairs(GameConfig.UnitQuality.Order) do
+	for _, name in ipairs(order) do
 		total += weights[name] or 0
 	end
 	local roll = rng:NextNumber() * total
-	for _, name in ipairs(GameConfig.UnitQuality.Order) do
+	for _, name in ipairs(order) do
 		roll -= weights[name] or 0
 		if roll <= 0 then
 			return name
@@ -52,25 +53,38 @@ local function rollVisibleCount(rng, total)
 end
 
 -- containerIds: array of Studio container ids (sorted by caller for stability).
+-- tierConfig: optional tier table from GameConfig.Tiers (QualityWeights,
+-- JunkChanceMult, LuckBonus, ValueScaleMin/Max). When nil, global defaults
+-- apply (pre-tier behavior). Tier ALWAYS flows into the roll — never stored
+-- without being consumed (see the Stage-4 quality-weights bug postmortem).
 -- Returns one REAL item set with a visible/hidden split:
---   { Seed, Quality, AllItems, VisibleItems, HiddenItems, Containers,
+--   { Seed, Quality, TierId, AllItems, VisibleItems, HiddenItems, Containers,
 --     TrueTotalValue }
 -- VisibleItems/HiddenItems reference the SAME item tables as Containers and
 -- AllItems (no clones, no rerolls). TrueTotalValue covers visible + hidden.
 -- Containers: { { ContainerId, Items = { item } } }, one item per box
 -- (preserves the pending Sell/Keep + display flow untouched).
-function UnitGeneratorService.GenerateUnit(rng, containerIds)
+function UnitGeneratorService.GenerateUnit(rng, containerIds, tierConfig)
 	rng = rng or Random.new()
+	tierConfig = tierConfig or {}
 	local seed = rng:NextInteger(1, 999999999)
-	local quality = rollQuality(rng)
+	-- Tier quality weights are consumed HERE (not the global table).
+	local quality = rollQuality(rng, tierConfig.QualityWeights, GameConfig.UnitQuality.Order)
 	local qdef = GameConfig.UnitQuality.Defs[quality] or GameConfig.UnitQuality.Defs.Average
 
+	local junkMult = tonumber(tierConfig.JunkChanceMult) or 1
+	local luckBonus = tonumber(tierConfig.LuckBonus) or 0
+	local scaleMin = tonumber(tierConfig.ValueScaleMin) or 1
+	local scaleMax = tonumber(tierConfig.ValueScaleMax) or 1
 	local function lootOpts()
 		return {
-			JunkChance = qdef.JunkChance,
-			ValueScaleMin = qdef.ValueScaleMin,
-			ValueScaleMax = qdef.ValueScaleMax,
-			RarityLuck = qdef.RarityLuck,
+			-- Tier multiplies quality junk chance (clamped to a probability).
+			JunkChance = math.clamp(qdef.JunkChance * junkMult, 0, 1),
+			-- Tier multiplies the quality value-scale range (one roll over
+			-- the combined range, so both quality and tier stay meaningful).
+			ValueScaleMin = qdef.ValueScaleMin * scaleMin,
+			ValueScaleMax = qdef.ValueScaleMax * scaleMax,
+			RarityLuck = qdef.RarityLuck + luckBonus,
 		}
 	end
 
@@ -118,6 +132,7 @@ function UnitGeneratorService.GenerateUnit(rng, containerIds)
 	return {
 		Seed = seed,
 		Quality = quality,
+		TierId = tierConfig.TierId,
 		AllItems = allItems,
 		VisibleItems = visible,
 		HiddenItems = hidden,
