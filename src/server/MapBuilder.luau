@@ -19,10 +19,17 @@
 --         Container_1..N (Parts, REQUIRED ≥1 — ContainerId attr, prompts)
 --         UnitBounds (Part marker, optional — falls back to unit extents)
 --         ReturnPoint (Part marker, REQUIRED — safety-eject destination)
+--     → StorageUnit2 (Model)
+--         Same required structure as StorageUnit. Hosts every other auction;
+--         validated identically (see getUnitHandles). ContainerIds must be
+--         unique across units (box_4+), so pregenerated loot never collides.
 --     → AuctionArea (Model, optional container)
---         BidCenter (Part marker, REQUIRED — bid-radius center)
+--         BidCenter (Part marker, REQUIRED — bid-radius center for Unit 1)
 --         Mat (Part, optional)
 --         Seats (Model, optional) → Chair_i (Model) → Seat + Post + Back
+--     → AuctionArea2 (Model, optional container)
+--         BidCenter (Part marker, REQUIRED — bid-radius center for Unit 2)
+--         ... same optional structure as AuctionArea, translated near Unit 2.
 --     → SpawnLocation (optional — engine-owned; warned if absent)
 --     → WarehouseTemplate (Model, optional — cloned per player at runtime;
 --         warned if absent, warehouses/displays degrade gracefully)
@@ -36,6 +43,11 @@ local MapBuilder = {}
 local MAP_NAME = "StorageAuctionMap"
 local UNIT_NAME = "StorageUnit"
 local AREA_NAME = "AuctionArea"
+-- Second physical unit: faithful duplicate, nearby offset. Both units are
+-- REQUIRED; a stale place missing StorageUnit2 fails clearly (re-sync the
+-- map from the filesystem with Argon SERVER priority, then Play again).
+local UNIT2_NAME = "StorageUnit2"
+local AREA2_NAME = "AuctionArea2"
 local SEATS_NAME = "Seats"
 
 local function failMissing(list)
@@ -75,46 +87,22 @@ local function standardPrompt(box, index)
 	return prompt
 end
 
--- Locate + validate the Studio-authored map. Errors clearly on missing
--- REQUIRED pieces (never silently rebuilds). Returns opaque handles.
-function MapBuilder.GetHandles()
-	local workspace = game.Workspace
-	local map = workspace:WaitForChild(MAP_NAME, 15)
-	if not map then
-		failMissing({ "Workspace." .. MAP_NAME .. " (run tools/BuildMapOnce.luau once, then Save the place)" })
-	end
-
-	-- LEGACY MIGRATION ONLY: destroy a stale PlayerShowroom left in old
-	-- places (Argon keepUnknowns can preserve it). Exact name match; never
-	-- touches WarehouseDistrict, WarehouseTemplate, StorageUnit, AuctionArea.
-	local legacyShowroom = map:FindFirstChild("PlayerShowroom")
-	if legacyShowroom then
-		warn("[SA] Removing legacy PlayerShowroom remnant (superseded by warehouses).")
-		legacyShowroom:Destroy()
-	end
-
-	local missing = {}
-	local function req(parent, name, path)
-		if not parent then
-			table.insert(missing, path)
-			return nil
-		end
-		local inst = parent:FindFirstChild(name)
-		if not inst then
-			table.insert(missing, path)
-		end
-		return inst
-	end
-
-	local unitPath = MAP_NAME .. "." .. UNIT_NAME
-	local unit = req(map, UNIT_NAME, unitPath)
+-- Per-unit discovery + validation + runtime stealth. Shared by every
+-- physical auction unit so Unit 1 and Unit 2 behave identically.
+-- Appends to the caller's shared `missing` list (reported once afterwards).
+-- Returns the per-unit handles table consumed by ALL behavior functions
+-- below, or nil when required pieces are absent (caller fails clearly).
+local function getUnitHandles(map, unitName, areaName, req, missing)
+	local unitPath = MAP_NAME .. "." .. unitName
+	local areaPath = MAP_NAME .. "." .. areaName
+	local unit = req(map, unitName, unitPath)
 	local door = req(unit, "Door", unitPath .. ".Door")
 	local barrier = req(unit, "Barrier", unitPath .. ".Barrier")
 	local floorPart = req(unit, "Floor", unitPath .. ".Floor")
 	local returnPoint = req(unit, "ReturnPoint", unitPath .. ".ReturnPoint")
 
-	local area = map:FindFirstChild(AREA_NAME)
-	local bidCenter = req(area, "BidCenter", MAP_NAME .. "." .. AREA_NAME .. ".BidCenter")
+	local area = map:FindFirstChild(areaName)
+	local bidCenter = req(area, "BidCenter", areaPath .. ".BidCenter")
 
 	-- Containers: discover every Container_* part (freely repositionable).
 	local containers = {}
@@ -138,49 +126,38 @@ function MapBuilder.GetHandles()
 		table.insert(missing, unitPath .. ".Container_1 (at least one Container_* part)")
 	end
 
-	if #missing > 0 then
-		failMissing(missing)
+	-- Type-check the required instances (a Model renamed to Door helps
+	-- nobody). Only check what was found; absences are already listed.
+	if door and not door:IsA("BasePart") then
+		table.insert(missing, unitPath .. ".Door must be a Part")
+		door = nil
 	end
-
-	-- Type-check the required instances (a Model renamed to Door helps nobody).
-	local typeErrors = {}
-	if not door:IsA("BasePart") then
-		table.insert(typeErrors, unitPath .. ".Door must be a Part")
+	if barrier and not barrier:IsA("BasePart") then
+		table.insert(missing, unitPath .. ".Barrier must be a Part")
+		barrier = nil
 	end
-	if not barrier:IsA("BasePart") then
-		table.insert(typeErrors, unitPath .. ".Barrier must be a Part")
+	if floorPart and not floorPart:IsA("BasePart") then
+		table.insert(missing, unitPath .. ".Floor must be a Part")
+		floorPart = nil
 	end
-	if not floorPart:IsA("BasePart") then
-		table.insert(typeErrors, unitPath .. ".Floor must be a Part")
+	if bidCenter and not bidCenter:IsA("BasePart") then
+		table.insert(missing, areaPath .. ".BidCenter must be a Part")
+		bidCenter = nil
 	end
-	if not bidCenter:IsA("BasePart") then
-		table.insert(typeErrors, MAP_NAME .. "." .. AREA_NAME .. ".BidCenter must be a Part")
+	if returnPoint and not returnPoint:IsA("BasePart") then
+		table.insert(missing, unitPath .. ".ReturnPoint must be a Part")
+		returnPoint = nil
 	end
-	if not returnPoint:IsA("BasePart") then
-		table.insert(typeErrors, unitPath .. ".ReturnPoint must be a Part")
-	end
-	if #typeErrors > 0 then
-		failMissing(typeErrors)
+	if door == nil or barrier == nil or floorPart == nil
+		or bidCenter == nil or returnPoint == nil or containerCount == 0
+	then
+		return nil -- caller reports `missing`; never half-build a unit
 	end
 
 	-- Optional pieces: use when present, ignore when absent.
 	local unitBounds = unit:FindFirstChild("UnitBounds")
 	if unitBounds and not unitBounds:IsA("BasePart") then
 		unitBounds = nil
-	end
-	-- Warehouse template (optional): cloned per player by WarehouseService.
-	-- Absence only disables warehouses/displays; the auction loop runs on.
-	local warehouseTemplate = map:FindFirstChild("WarehouseTemplate")
-	if warehouseTemplate and not warehouseTemplate:IsA("Model") then
-		warehouseTemplate = nil
-	end
-	if warehouseTemplate == nil then
-		warn("[SA] No WarehouseTemplate in map; warehouses/displays disabled until the map provides one.")
-	end
-	if map:FindFirstChild("SpawnLocation") == nil
-		and workspace:FindFirstChildOfClass("SpawnLocation") == nil
-	then
-		warn("[SA] No SpawnLocation found; players may spawn at the origin. Add one under " .. MAP_NAME .. ".")
 	end
 
 	-- Runtime stealth for markers + prompt setup (state itself comes later).
@@ -189,11 +166,9 @@ function MapBuilder.GetHandles()
 	stealthMarker(returnPoint)
 	-- The barrier must start invisible even before the first state reset.
 	-- (Collision itself is driven by SetBarrier during state transitions.)
-	if barrier then
-		barrier.Transparency = 1
-		barrier.CanTouch = false
-		barrier.CanQuery = false
-	end
+	barrier.Transparency = 1
+	barrier.CanTouch = false
+	barrier.CanQuery = false
 	local index = 0
 	for _, box in pairs(containers) do
 		index += 1
@@ -211,19 +186,107 @@ function MapBuilder.GetHandles()
 		center = cf.Position
 		boundHalf = size / 2
 	end
+	local unitCenter = Vector3.new(center.X, floorTop, center.Z)
+
+	-- Spatial sanity: every gameplay marker must sit near its own unit.
+	-- Catches copy/paste offset mistakes (e.g. a BidCenter left at Unit 1).
+	local function checkNearby(label, pos)
+		local dx = pos.X - unitCenter.X
+		local dz = pos.Z - unitCenter.Z
+		if dx * dx + dz * dz > 50 * 50 then
+			warn(string.format("[SA] %s.%s is %.0f studs from its unit center — check the map offset.",
+				unitName, label, math.sqrt(dx * dx + dz * dz)))
+		end
+	end
+	checkNearby("Door", door.Position)
+	checkNearby("Barrier", barrier.Position)
+	checkNearby("BidCenter", bidCenter.Position)
+	checkNearby("ReturnPoint", returnPoint.Position)
+	for id, box in pairs(containers) do
+		checkNearby("Container " .. tostring(id), box.Position)
+	end
 
 	return {
-		Map = map,
+		UnitName = unitName,
 		Unit = unit,
 		Door = door,
 		Barrier = barrier,
 		Containers = containers,
-		UnitCenter = Vector3.new(center.X, floorTop, center.Z),
+		UnitCenter = unitCenter,
 		BoundHalf = boundHalf,
 		FloorTop = floorTop,
 		BidCenter = bidCenter.Position,
 		ReturnCFrame = returnPoint.CFrame,
+	}
+end
+
+-- Locate + validate the Studio-authored map. Errors clearly on missing
+-- REQUIRED pieces (never silently rebuilds). Returns map-level handles plus
+-- the per-unit tables AuctionService rotates between:
+--   { Map, WarehouseTemplate, Units = { [1], [2] } }
+function MapBuilder.GetHandles()
+	local workspace = game.Workspace
+	local map = workspace:WaitForChild(MAP_NAME, 15)
+	if not map then
+		failMissing({ "Workspace." .. MAP_NAME .. " (run tools/BuildMapOnce.luau once, then Save the place)" })
+	end
+
+	-- LEGACY MIGRATION ONLY: destroy a stale PlayerShowroom left in old
+	-- places (Argon keepUnknowns can preserve it). Exact name match; never
+	-- touches WarehouseDistrict, WarehouseTemplate, StorageUnit(2), AuctionArea(2).
+	local legacyShowroom = map:FindFirstChild("PlayerShowroom")
+	if legacyShowroom then
+		warn("[SA] Removing legacy PlayerShowroom remnant (superseded by warehouses).")
+		legacyShowroom:Destroy()
+	end
+
+	local missing = {}
+	local function req(parent, name, path)
+		if not parent then
+			table.insert(missing, path)
+			return nil
+		end
+		local inst = parent:FindFirstChild(name)
+		if not inst then
+			table.insert(missing, path)
+		end
+		return inst
+	end
+
+	-- Both physical units validate through the same builder: identical
+	-- structure, identical behavior. Absences accumulate in `missing`.
+	local units = {}
+	units[1] = getUnitHandles(map, UNIT_NAME, AREA_NAME, req, missing)
+	units[2] = getUnitHandles(map, UNIT2_NAME, AREA2_NAME, req, missing)
+
+	if #missing > 0 then
+		failMissing(missing)
+	end
+	if units[1] == nil or units[2] == nil then
+		failMissing({ MAP_NAME .. ".StorageUnit + StorageUnit2 (both auction units are required)" })
+	end
+
+	-- Optional pieces: use when present, ignore when absent.
+	-- Warehouse template (optional): cloned per player by WarehouseService.
+	-- Absence only disables warehouses/displays; the auction loop runs on.
+	local warehouseTemplate = map:FindFirstChild("WarehouseTemplate")
+	if warehouseTemplate and not warehouseTemplate:IsA("Model") then
+		warehouseTemplate = nil
+	end
+	if warehouseTemplate == nil then
+		warn("[SA] No WarehouseTemplate in map; warehouses/displays disabled until the map provides one.")
+	end
+	if map:FindFirstChild("SpawnLocation") == nil
+		and workspace:FindFirstChildOfClass("SpawnLocation") == nil
+	then
+		warn("[SA] No SpawnLocation found; players may spawn at the origin. Add one under " .. MAP_NAME .. ".")
+	end
+
+	return {
+		Map = map,
 		WarehouseTemplate = warehouseTemplate, -- Model or nil
+		-- Per-unit handles; AuctionService rotates the active unit 1 -> 2.
+		Units = units, -- [1] StorageUnit, [2] StorageUnit2
 	}
 end
 

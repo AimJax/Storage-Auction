@@ -24,7 +24,12 @@ local Remotes = nil
 local PlayerStatsService = nil
 local DisplayService = nil
 
--- Auction state (single active unit for M1)
+-- Auction state. ONE server-wide auction at a time; only the physical
+-- location alternates (deterministic 1 -> 2 -> 1 -> 2, no tiers).
+-- `MapHandles` always points at the ACTIVE unit's per-unit handles, so every
+-- MapBuilder call below targets the correct unit with no per-call branching.
+local MapUnits = nil -- [1],[2] per-unit handles from MapBuilder.GetHandles
+local ActiveUnitIndex = 1 -- 1 or 2; rotates only on Cleanup -> Waiting
 local State = "Waiting"
 local StateEndsAt = os.clock() + GameConfig.WaitingDuration
 local CurrentBid = 0
@@ -94,6 +99,7 @@ local function broadcast()
 		end
 		ev:FireAllClients({
 			state = State,
+			unitIndex = ActiveUnitIndex, -- physical unit hosting this auction
 			timeLeft = math.floor(timeLeft() + 0.5),
 			currentBid = CurrentBid,
 			bidder = CurrentBidder,
@@ -328,6 +334,7 @@ function AuctionService.GetSnapshot()
 	local center = MapHandles and MapHandles.BidCenter
 	return {
 		state = State,
+		unitIndex = ActiveUnitIndex, -- physical unit hosting this auction
 		timeLeft = math.floor(timeLeft() + 0.5),
 		currentBid = CurrentBid,
 		bidder = CurrentBidder,
@@ -493,6 +500,18 @@ local function stateLoop()
 				-- then reset. Nobody can be sealed in.
 				ejectAnyoneStillInside()
 				resetForNextAuction()
+				-- Full cycle complete: deterministically rotate to the other
+				-- physical unit. The finished unit was just reset closed/inert;
+				-- reset the incoming unit too, so it initializes cleanly.
+				-- (The Waiting branch resets once more before pregenerating.)
+				if MapUnits then
+					ActiveUnitIndex = 3 - ActiveUnitIndex
+					MapHandles = MapUnits[ActiveUnitIndex]
+					resetForNextAuction()
+					if GameConfig.DebugAuction then
+						print(string.format("[SA] Rotated to unit %d", ActiveUnitIndex))
+					end
+				end
 				setState("Waiting", GameConfig.WaitingDuration)
 			end
 			task.wait(0.5)
@@ -507,7 +526,15 @@ function AuctionService.Init(deps)
 	InventoryService = deps.InventoryService
 	NPCBidderService = deps.NPCBidderService
 	MapBuilder = deps.MapBuilder
-	MapHandles = deps.MapHandles
+	local topHandles = deps.MapHandles
+	if not topHandles or type(topHandles.Units) ~= "table"
+		or topHandles.Units[1] == nil or topHandles.Units[2] == nil
+	then
+		error("[SA] AuctionService needs MapHandles.Units[1] and [2] (see MapBuilder.GetHandles).", 0)
+	end
+	MapUnits = topHandles.Units
+	ActiveUnitIndex = 1 -- every server starts on Unit 1
+	MapHandles = MapUnits[ActiveUnitIndex]
 	Remotes = deps.Remotes
 	PlayerStatsService = deps.PlayerStatsService
 	DisplayService = deps.DisplayService
@@ -544,21 +571,33 @@ function AuctionService.Init(deps)
 
 	-- ProximityPrompt path (server-authoritative, no client trust needed).
 	-- Rejections are pushed back as toasts so non-winners get feedback.
-	if MapHandles then
-		for containerId, box in pairs(MapHandles.Containers) do
-			local prompt = box:FindFirstChildOfClass("ProximityPrompt")
-			if prompt then
-				prompt.Enabled = false
-				prompt.Triggered:Connect(function(player)
-					local ok, result = AuctionService.TryOpenContainer(player, containerId)
-					if not ok then
-						local notify = Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
-						if notify then
-							notify:FireClient(player, tostring(result))
+	-- Wired on EVERY unit (only the active unit's prompts are ever enabled).
+	if MapUnits then
+		for _, unitHandles in ipairs(MapUnits) do
+			for containerId, box in pairs(unitHandles.Containers) do
+				local prompt = box:FindFirstChildOfClass("ProximityPrompt")
+				if prompt then
+					prompt.Enabled = false
+					prompt.Triggered:Connect(function(player)
+						local ok, result = AuctionService.TryOpenContainer(player, containerId)
+						if not ok then
+							local notify = Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
+							if notify then
+								notify:FireClient(player, tostring(result))
+							end
 						end
-					end
-				end)
+					end)
+				end
 			end
+		end
+	end
+
+	-- Both units boot closed/inert; the state loop drives the active one.
+	if MapUnits then
+		for _, unitHandles in ipairs(MapUnits) do
+			MapBuilder.SetDoorOpen(unitHandles, false)
+			MapBuilder.SetBarrier(unitHandles, true)
+			MapBuilder.ResetContainers(unitHandles)
 		end
 	end
 
