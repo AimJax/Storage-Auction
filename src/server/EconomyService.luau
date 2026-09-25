@@ -34,19 +34,30 @@ local function pushCashChanged(player, amount)
 	end
 end
 
-function EconomyService.SetupPlayer(player, startingCash)
+-- Idempotent setup: reuses existing leaderstats/Cash instead of creating
+-- duplicates on double-init. Silent mode skips the push so DataStore load
+-- can restore final values before the client ever sees a number.
+function EconomyService.SetupPlayer(player, startingCash, silent)
 	startingCash = startingCash or GameConfig.StartingCash
 	if balances[player.UserId] == nil then
 		balances[player.UserId] = startingCash
 	end
-	local leader = Instance.new("Folder")
-	leader.Name = "leaderstats"
-	local cash = Instance.new("IntValue")
-	cash.Name = "Cash"
+	local leader = player:FindFirstChild("leaderstats")
+	if not (leader and leader:IsA("Folder")) then
+		leader = Instance.new("Folder")
+		leader.Name = "leaderstats"
+		leader.Parent = player
+	end
+	local cash = leader:FindFirstChild("Cash")
+	if not (cash and cash:IsA("IntValue")) then
+		cash = Instance.new("IntValue")
+		cash.Name = "Cash"
+		cash.Parent = leader
+	end
 	cash.Value = balances[player.UserId]
-	cash.Parent = leader
-	leader.Parent = player
-	pushCashChanged(player, balances[player.UserId])
+	if not silent then
+		pushCashChanged(player, balances[player.UserId])
+	end
 end
 
 function EconomyService.GetCash(playerOrUserId)
@@ -94,8 +105,7 @@ function EconomyService.ClearPlayer(player)
 	balances[player.UserId] = nil
 end
 
-Players.PlayerRemoving:Connect(function(player)
-	-- Keep balance in memory only; PlayerDataService persists it.
-end)
+-- NOTE: no PlayerRemoving handler here on purpose. Lifecycle cleanup is
+-- centralized in init.server (save-before-clear order).
 
 return EconomyService

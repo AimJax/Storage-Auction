@@ -19,6 +19,7 @@ local PlotService = {}
 local Remotes = nil
 local WarehouseService = nil
 local DisplayService = nil
+local PlayerDataService = nil
 
 -- plots[index] = { index, name, model, origin (CFrame), originPos (Vector3),
 --                  signLabel (TextLabel or nil), prompt (ProximityPrompt or nil),
@@ -76,6 +77,7 @@ function PlotService.Init(deps)
 	Remotes = deps.Remotes
 	WarehouseService = deps.WarehouseService
 	DisplayService = deps.DisplayService
+	PlayerDataService = deps.PlayerDataService
 
 	local district = game.Workspace:FindFirstChild("StorageAuctionMap")
 	if district then
@@ -175,6 +177,10 @@ end
 -- steals, never moves placed players. One plot per player (session).
 function PlotService.ClaimPlot(player, index)
 	if not player then
+		return nil
+	end
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		notify(player, PlayerDataService.NotReadyMessage())
 		return nil
 	end
 	if #plots == 0 then

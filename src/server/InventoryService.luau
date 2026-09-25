@@ -30,7 +30,9 @@ function InventoryService.SetupPlayer(player)
 	if inventories[player.UserId] == nil then
 		inventories[player.UserId] = {}
 	end
-	task.defer(push, player)
+	-- No push here: PlayerDataService restores saved items (with its own
+	-- push) and init.server pushes the final list on join, so clients never
+	-- see a fake empty-inventory flash.
 end
 
 function InventoryService.AddItem(player, itemInstance)

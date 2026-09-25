@@ -22,6 +22,7 @@ local DisplayService = {}
 
 local InventoryService = nil
 local WarehouseService = nil
+local PlayerDataService = nil
 local Remotes = nil
 
 -- [UserId] = { [slotIndex] = InstanceId }. Identity only — item fields are
@@ -137,6 +138,7 @@ end
 function DisplayService.Init(deps)
 	InventoryService = deps.InventoryService
 	WarehouseService = deps.WarehouseService
+	PlayerDataService = deps.PlayerDataService
 	Remotes = deps.Remotes
 
 	local displayItem = Remotes:FindFirstChild(GameConfig.RemoteNames.DisplayItem)
@@ -163,6 +165,9 @@ end
 -- nothing belonging to any other player. Replaces the caller's own occupant.
 -- Slot range follows the player's warehouse level (not a hardcoded count).
 function DisplayService.AssignDisplay(player, instanceId, slotIndex)
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		return false, PlayerDataService.NotReadyMessage()
+	end
 	slotIndex = math.floor(tonumber(slotIndex) or 0)
 	local maxSlots = WarehouseService and WarehouseService.GetDisplaySlotCount(player) or GameConfig.DisplaySlotCount
 	if slotIndex < 1 or slotIndex > maxSlots then
@@ -201,6 +206,9 @@ end
 
 -- Remove whichever of the CALLER's displays holds this InstanceId.
 function DisplayService.RemoveDisplay(player, instanceId)
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		return false, PlayerDataService.NotReadyMessage()
+	end
 	local slotIndex = findSlotWithItem(player.UserId, instanceId)
 	if not slotIndex then
 		return false, "That item is not on display."

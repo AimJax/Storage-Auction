@@ -28,6 +28,7 @@ local PlayerStatsService = nil
 local DisplayService = nil
 local DebtService = nil
 local WarehouseService = nil
+local PlayerDataService = nil
 
 -- Sessions own ALL mutable auction state. Nothing auction-related lives in
 -- module globals (only service refs + the session list itself).
@@ -293,6 +294,11 @@ local function tryBid(s, playerOrNil, amount, isNPC, npcName)
 	if not player then
 		return false, "Invalid bidder."
 	end
+	-- Data gate: no server-mutating actions while this player's save data is
+	-- still loading. NPC/internal paths (playerOrNil == nil) never gate.
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		return false, PlayerDataService.NotReadyMessage()
+	end
 	-- Local auction: must stand near THIS unit. Server-authoritative; the
 	-- client button is only a UX hint.
 	if not MapBuilder.IsWithinBidRadius(s.Handles, player, GameConfig.BidRadius) then
@@ -345,6 +351,9 @@ function AuctionService.TryOpenContainer(unitIndex, player, containerId)
 	if not s then
 		return false, err
 	end
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		return false, PlayerDataService.NotReadyMessage()
+	end
 	if s.State ~= "Rummaging" then
 		return false, "Containers can only be opened during rummaging."
 	end
@@ -383,6 +392,9 @@ function AuctionService.TryKeepItem(unitIndex, player, instanceId)
 	if not s then
 		return false, err
 	end
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		return false, PlayerDataService.NotReadyMessage()
+	end
 	local pending = s.PendingByUser[player.UserId]
 	if not pending then
 		return false, "No pending item to keep."
@@ -408,6 +420,9 @@ function AuctionService.TrySellItem(unitIndex, player, instanceId)
 	local s, err = resolveSession(unitIndex)
 	if not s then
 		return false, err
+	end
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		return false, PlayerDataService.NotReadyMessage()
 	end
 	local pending = s.PendingByUser[player.UserId]
 	if pending and (instanceId == nil or instanceId == pending.InstanceId) then
@@ -466,6 +481,32 @@ local function forceKeepPending(s, userId)
 			notify:FireClient(player, { text = "Time expired - kept " .. pending.Name, closeReveal = true })
 		end
 	end
+end
+
+-- Leave path: resolve a disconnecting player's pending Sell/Keep decisions
+-- BEFORE PlayerDataService snapshots, using the same value-preserving rule
+-- as grace expiry (room -> keep, full -> auto-sell). Opened boxes are never
+-- lost and never duplicated. Returns kept/sold counts for logging.
+function AuctionService.ResolvePendingForPlayer(player)
+	local kept, sold = 0, 0
+	if not player then
+		return kept, sold
+	end
+	for _, s in pairs(Sessions) do
+		local pending = s.PendingByUser[player.UserId]
+		if pending then
+			s.PendingByUser[player.UserId] = nil
+			if WarehouseService and InventoryService.GetCount(player) >= WarehouseService.GetStorageCapacity(player) then
+				DebtService.ApplySaleProceeds(player, pending.FinalValue)
+				sold += 1
+			else
+				InventoryService.AddItem(player, pending)
+				kept += 1
+			end
+			PlayerStatsService.Push(player)
+		end
+	end
+	return kept, sold
 end
 
 function AuctionService.ClearPlayer(player)
@@ -698,6 +739,7 @@ function AuctionService.Init(deps)
 	DisplayService = deps.DisplayService
 	DebtService = deps.DebtService
 	WarehouseService = deps.WarehouseService
+	PlayerDataService = deps.PlayerDataService
 
 	-- One independent session per physical unit. Tier is fixed per unit:
 	-- Unit 1 = Budget, Unit 2 = Standard, Unit 3 = HighRoller (GameConfig).

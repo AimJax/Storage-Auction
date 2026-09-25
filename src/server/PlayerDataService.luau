@@ -38,6 +38,7 @@ local WarehouseServiceRef = nil
 local DisplayServiceRef = nil
 
 local loaded = {} -- [UserId] = true once fully loaded (or session fallback)
+local saveAllowed = {} -- [UserId] = true only when remote data is safe to overwrite
 
 function PlayerDataService.Init(deps)
 	EconomyServiceRef = deps.EconomyService
@@ -50,6 +51,18 @@ end
 
 function PlayerDataService.IsLoaded(player)
 	return player ~= nil and loaded[player.UserId] == true
+end
+
+-- Save gate: autosave / leave / shutdown must skip players whose load never
+-- produced trustworthy state, so a failed load can never overwrite remote
+-- data with defaults.
+function PlayerDataService.IsSaveAllowed(player)
+	return player ~= nil and saveAllowed[player.UserId] == true
+end
+
+-- Gameplay gate message shared by all server-mutating player actions.
+function PlayerDataService.NotReadyMessage()
+	return "Player data is still loading."
 end
 
 local function sanitizeNumber(value, default, min, max)
@@ -112,25 +125,44 @@ end
 
 function PlayerDataService.Load(player)
 	local startCash = GameConfig.StartingCash
-	EconomyServiceRef.SetupPlayer(player, startCash)
+	-- Silent container setup first: no pushes until final state is known,
+	-- so clients never see a fake StartingCash/empty-inventory flash.
+	EconomyServiceRef.SetupPlayer(player, startCash, true)
 	InventoryServiceRef.SetupPlayer(player)
 	if DebtServiceRef then
 		DebtServiceRef.SetupPlayer(player)
 	end
+	loaded[player.UserId] = false
+	saveAllowed[player.UserId] = false
 	if not store then
-		loaded[player.UserId] = true -- session-only; saves are no-ops
+		-- Session fallback: playable now, never persisted.
+		PlayerDataService.finishLoad(player, sanitizeRecord(nil))
 		return
 	end
 	local data = nil
+	local loadOk = false
 	local success, result = pcall(function()
 		return store:GetAsync("player_" .. player.UserId)
 	end)
 	if success then
 		data = result
+		loadOk = true
 	else
 		warn("[SA] Load failed for " .. player.Name .. ": " .. tostring(result))
 	end
-	local clean = sanitizeRecord(data)
+	if not loadOk then
+		-- Failed load: playable session fallback, but SaveAllowed stays
+		-- false so later saves can never overwrite remote data with defaults.
+		PlayerDataService.finishLoad(player, sanitizeRecord(nil))
+		return
+	end
+	saveAllowed[player.UserId] = true
+	PlayerDataService.finishLoad(player, sanitizeRecord(data))
+end
+
+-- Shared finalization for every load outcome: restore in deterministic
+-- order, push final state once, then mark ready. Never half-loaded.
+function PlayerDataService.finishLoad(player, clean)
 	-- Deterministic restore order; every push keeps the client consistent.
 	-- Over-cap grandfathered inventories restore intact (only NEW keeps gate).
 	EconomyServiceRef.SetCash(player, clean.Cash)
@@ -213,10 +245,26 @@ function PlayerDataService.Save(player)
 		-- Never overwrite remote data with defaults for unloaded players.
 		return
 	end
+	if saveAllowed[player.UserId] ~= true then
+		-- Load failed or store unavailable: session is playable but must
+		-- never persist. Explicit (not silent) so logs show the reason.
+		warn("[SA] Save skipped for " .. player.Name .. " (load did not produce saveable state).")
+		return
+	end
+	-- Snapshot BEFORE any yield so retries store one consistent record.
 	local record = snapshot(player)
-	local success, result = pcall(function()
-		store:SetAsync("player_" .. player.UserId, record)
-	end)
+	local success, result = nil, nil
+	for attempt = 1, 3 do
+		success, result = pcall(function()
+			store:SetAsync("player_" .. player.UserId, record)
+		end)
+		if success then
+			break
+		end
+		if attempt < 3 then
+			task.wait(0.5 * attempt) -- bounded backoff, no infinite loops
+		end
+	end
 	if not success then
 		warn("[SA] Save failed for " .. player.Name .. ": " .. tostring(result))
 	end
@@ -225,6 +273,7 @@ end
 function PlayerDataService.ClearPlayer(player)
 	if player then
 		loaded[player.UserId] = nil
+		saveAllowed[player.UserId] = nil
 	end
 end
 

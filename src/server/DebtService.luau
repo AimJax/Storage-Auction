@@ -14,6 +14,7 @@ local DebtService = {}
 
 local EconomyService = nil
 local PlayerStatsService = nil
+local PlayerDataService = nil
 local Remotes = nil
 local ATMPrompt = nil
 
@@ -118,10 +119,15 @@ function DebtService.GetState(player)
 end
 
 -- Take a fixed loan: Cash += Borrow, debt = Repay. Client sends only the ID.
--- Returns (ok, message).
+-- Returns (ok, message). Rejects while player data is still loading, and
+-- refuses when cash is already at MaxCash (a clamped Borrow credit must
+-- never create full Repay debt for partial cash).
 function DebtService.TakeLoan(player, loanId)
 	if not player then
 		return false, "Invalid player."
+	end
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		return false, PlayerDataService.NotReadyMessage()
 	end
 	loanId = tostring(loanId or "")
 	local loan = GameConfig.Loans[loanId]
@@ -135,6 +141,9 @@ function DebtService.TakeLoan(player, loanId)
 	local ok, reason = loanEligibility(player, loanId, loan)
 	if not ok then
 		return false, reason
+	end
+	if EconomyService.GetCash(player) + loan.Borrow > GameConfig.MaxCash then
+		return false, "Cash balance is too high for this loan."
 	end
 	EconomyService.AddCash(player, loan.Borrow)
 	st.debt = loan.Repay
@@ -154,7 +163,7 @@ function DebtService.ApplySaleProceeds(player, grossValue)
 	if gross <= 0 then
 		return 0, 0, debt
 	end
-	local rate = tonumber(GameConfig.DebtRepaymentRate) or 0.25
+	local rate = math.clamp(tonumber(GameConfig.DebtRepaymentRate) or 0.25, 0, 1)
 	local pay = math.min(math.floor(gross * rate), debt)
 	local cashAdded = gross - pay
 	if pay > 0 and st then
@@ -174,6 +183,9 @@ end
 function DebtService.ClaimRecovery(player)
 	if not player then
 		return false, "Invalid player."
+	end
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		return false, PlayerDataService.NotReadyMessage()
 	end
 	local cash = EconomyService.GetCash(player)
 	if cash >= GameConfig.RecoveryThreshold then
@@ -242,6 +254,7 @@ end
 function DebtService.Init(deps)
 	EconomyService = deps.EconomyService
 	PlayerStatsService = deps.PlayerStatsService
+	PlayerDataService = deps.PlayerDataService
 	Remotes = deps.Remotes
 	ATMPrompt = deps.ATMPrompt
 
@@ -288,9 +301,9 @@ function DebtService.Init(deps)
 		end
 	end
 
-	Players.PlayerRemoving:Connect(function(player)
-		DebtService.ClearPlayer(player)
-	end)
+	-- NOTE: no PlayerRemoving handler here on purpose. Player lifecycle
+	-- cleanup is centralized in init.server (save-before-clear order); an
+	-- independent clear could race the save and wipe restored debt.
 end
 
 return DebtService

@@ -21,6 +21,7 @@ local MapHandles = nil
 local EconomyService = nil
 local PlayerStatsService = nil
 local InventoryService = nil
+local PlayerDataService = nil
 local Remotes = nil
 
 -- [UserId] = { root = Model, slots = { [i] = Part }, level, unlockedSlots, upgrades }
@@ -366,6 +367,7 @@ function WarehouseService.Init(deps)
 	EconomyService = deps.EconomyService
 	PlayerStatsService = deps.PlayerStatsService
 	InventoryService = deps.InventoryService
+	PlayerDataService = deps.PlayerDataService
 	Remotes = deps.Remotes
 
 	folder = game.Workspace:FindFirstChild(FOLDER_NAME)
@@ -466,6 +468,18 @@ function WarehouseService.DestroyFor(player)
 	end
 end
 
+-- Actual PLAYER LEAVE cleanup (after save): destroy any lingering runtime
+-- warehouse and clear the per-user level cache. Plot release (DestroyFor)
+-- deliberately keeps the level: releasing/reclaiming in-session must not
+-- lose progression; only real lifecycle cleanup clears it.
+function WarehouseService.ClearPlayer(player)
+	if not player then
+		return
+	end
+	WarehouseService.DestroyFor(player)
+	levels[player.UserId] = nil
+end
+
 function WarehouseService.GetWarehouse(player)
 	if not player then
 		return nil
@@ -547,6 +561,9 @@ end
 function WarehouseService.UpgradeWarehouse(player)
 	if not player then
 		return false, "Invalid player."
+	end
+	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
+		return false, PlayerDataService.NotReadyMessage()
 	end
 	local entry = WarehouseService.GetWarehouse(player)
 	if not entry then

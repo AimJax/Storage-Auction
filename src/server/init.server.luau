@@ -93,12 +93,14 @@ AuctionService.Init({
 	DisplayService = DisplayService,
 	DebtService = DebtService,
 	WarehouseService = WarehouseService,
+	PlayerDataService = PlayerDataService,
 })
 
 -- 4b) Runtime ATM loans/debt/recovery (no persistence in Stage 5A).
 DebtService.Init({
 	EconomyService = EconomyService,
 	PlayerStatsService = PlayerStatsService,
+	PlayerDataService = PlayerDataService,
 	Remotes = remotes,
 	ATMPrompt = mapHandles.ATM,
 })
@@ -107,6 +109,7 @@ DebtService.Init({
 DisplayService.Init({
 	InventoryService = InventoryService,
 	WarehouseService = WarehouseService,
+	PlayerDataService = PlayerDataService,
 	Remotes = remotes,
 })
 PlayerStatsService.Init({
@@ -121,19 +124,31 @@ PlotService.Init({
 	Remotes = remotes,
 	WarehouseService = WarehouseService,
 	DisplayService = DisplayService,
+	PlayerDataService = PlayerDataService,
 })
 WarehouseService.Init({
 	MapHandles = mapHandles,
 	EconomyService = EconomyService,
 	PlayerStatsService = PlayerStatsService,
 	InventoryService = InventoryService,
+	PlayerDataService = PlayerDataService,
 	Remotes = remotes,
 })
 
--- 7) Players.
+-- 7) Players. Single deterministic owner of player initialization: one
+-- Load per join (guarded against duplicate PlayerAdded races), then the
+-- delayed full-state push. Debt/inventory/stats setup all happens inside
+-- PlayerDataService.Load — never reset afterwards.
+local bootstrapped = {}
 local function onPlayerAdded(player)
+	if not player then
+		return
+	end
+	if bootstrapped[player.UserId] then
+		return -- duplicate join event: state already initializing/initialized
+	end
+	bootstrapped[player.UserId] = true
 	PlayerDataService.Load(player)
-	DebtService.SetupPlayer(player)
 	-- NOTE: no auto plot assignment. Players claim a plot manually at its
 	-- sign ("Claim Plot", E). See PlotService.ClaimPlot.
 	-- Send initial snapshot shortly after spawn so UI populates.
@@ -161,8 +176,14 @@ local function onPlayerAdded(player)
 end
 
 local function onPlayerRemoving(player)
-	-- ORDER IS LOAD-BEARING: snapshot + save FIRST while every service still
-	-- holds runtime state (debt, inventory, wins, cash), and only then clear.
+	if not player then
+		return
+	end
+	bootstrapped[player.UserId] = nil
+	-- ORDER IS LOAD-BEARING: resolve pending durable value, then snapshot +
+	-- save FIRST while every service still holds runtime state (debt,
+	-- inventory, wins, cash, level, displays), and only then clear.
+	AuctionService.ResolvePendingForPlayer(player)
 	PlayerDataService.Save(player)
 	PlotService.ReleasePlot(player)
 	AuctionService.ClearPlayer(player)
@@ -171,6 +192,7 @@ local function onPlayerRemoving(player)
 	InventoryService.ClearPlayer(player)
 	EconomyService.ClearPlayer(player)
 	DebtService.ClearPlayer(player)
+	WarehouseService.ClearPlayer(player)
 	PlayerDataService.ClearPlayer(player)
 end
 
@@ -181,8 +203,21 @@ for _, p in ipairs(Players:GetPlayers()) do
 end
 
 game:BindToClose(function()
+	-- Bounded parallel saves: one task per loaded+allowed player, then a
+	-- capped wait so shutdown never hangs on DataStore stalls.
+	local pending = 0
 	for _, p in ipairs(Players:GetPlayers()) do
-		PlayerDataService.Save(p)
+		if PlayerDataService.IsLoaded(p) and PlayerDataService.IsSaveAllowed(p) then
+			pending += 1
+			task.spawn(function(pl)
+				PlayerDataService.Save(pl)
+				pending -= 1
+			end, p)
+		end
+	end
+	local deadline = os.clock() + 8
+	while pending > 0 and os.clock() < deadline do
+		task.wait(0.2)
 	end
 end)
 
