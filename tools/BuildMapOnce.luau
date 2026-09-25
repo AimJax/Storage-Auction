@@ -1,23 +1,27 @@
--- StorageAuction — ONE-TIME map migration (Studio command bar, Edit mode).
+-- StorageAuction — LEGACY TOOL, DO NOT RUN (see below).
 --
--- WHAT: builds the persistent, manually-editable map model
---       Workspace.StorageAuctionMap from the M1 prototype layout.
--- WHEN: exactly once, on a place that does not have the map yet.
--- HOW:
---   1. Open StorageAuction-place.rbxl in Roblox Studio (DO NOT press Play).
---   2. Make sure the Rojo plugin is NOT connected (avoid any sync surprise).
---   3. Copy-paste this ENTIRE file into the command bar (View → Command Bar).
---   4. Press Enter. Watch Output for "[SA] Map migration complete".
---   5. SAVE the place (Ctrl+S). The map now lives in the .rbxl permanently.
---   6. From now on, edit Workspace.StorageAuctionMap directly in Studio.
+-- WHAT THIS WAS: a one-time map migration (Studio command bar, Edit mode)
+-- that built Workspace.StorageAuctionMap from the ancient M1 one-unit
+-- prototype layout.
 --
--- Ground assumption: the place Baseplate's top surface is at Y = 0 (Studio
--- default). If yours differs, select StorageAuctionMap after migration and
--- move it vertically so the Floor slab sits correctly, then Save.
+-- WHY IT IS OBSOLETE: the current game has THREE auction units, three
+-- auction areas, an ATM, warehouse district plots, and a warehouse template.
+-- Regenerating from this script would DESTROY all of that and produce an
+-- incomplete single-unit map that fails validation.
+--
+-- If you run this file, it errors immediately on purpose. To recover or
+-- re-seed the canonical map, restore `map/StorageAuctionMap` from version
+-- control and sync it into Studio with Argon SERVER priority (never run
+-- argon init, never merge backup-broken-2026-09-24 into main).
+-- See AGENTS.md ("Sync workflow") for the exact steps.
 --
 -- SAFE: aborts without changing anything if StorageAuctionMap already exists.
 -- This script is NOT part of Rojo sync (tools/ is unmapped) and NEVER runs
 -- at game runtime.
+
+error("[SA] LEGACY TOOL: tools/BuildMapOnce.luau builds only the ancient M1 one-unit prototype. " ..
+	"Restore map/StorageAuctionMap from version control and sync with Argon SERVER priority instead. " ..
+	"See AGENTS.md.", 0)
 
 local workspace = game:GetService("Workspace")
 

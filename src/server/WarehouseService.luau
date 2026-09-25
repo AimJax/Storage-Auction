@@ -1,5 +1,5 @@
 --!nonstrict
--- StorageAuction MVP — runtime player warehouses.
+-- StorageAuction — runtime player warehouses.
 --
 -- Clones the ONE Studio-authored WarehouseTemplate into the player's
 -- assigned plot at runtime. Placement derives from the plot's
@@ -7,7 +7,7 @@
 -- Template stays hidden/non-interactive during Play; clones are per-player
 -- under Workspace/SA_PlayerWarehouses (outside the Argon-managed map).
 --
--- Warehouse record shape (future-persistent; plot index never saved):
+-- Warehouse record shape (level persists via PlayerDataService; plot index never saved):
 --   { root, slots, level = 1, unlockedSlots, upgrades = {} }
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

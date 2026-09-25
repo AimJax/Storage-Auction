@@ -1,5 +1,5 @@
 --!nonstrict
--- StorageAuction M1 — server-authoritative Cash ledger.
+-- StorageAuction — server-authoritative Cash ledger.
 -- All Cash reads/writes go through here. Client never sets its own balance.
 
 local Players = game:GetService("Players")

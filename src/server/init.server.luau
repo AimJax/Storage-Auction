@@ -1,5 +1,5 @@
 --!nonstrict
--- StorageAuction M1 — server bootstrap.
+-- StorageAuction — server bootstrap.
 -- Creates remotes, builds map, wires services, starts auction loop.
 
 local Players = game:GetService("Players")
@@ -236,4 +236,4 @@ game:BindToClose(function()
 	end
 end)
 
-print("[SA] StorageAuction M1 server ready.")
+print("[SA] StorageAuction server ready.")

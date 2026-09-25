@@ -110,7 +110,6 @@ local GameConfig = {
 	-- Display assignments are tracked per player so per-player showrooms
 	-- can replace the shared area later without changing the record shape.
 	DisplaySlotCount = 6, -- legacy default = Level 1 slots; levels override
-	PersistSchemaVersion = 2,
 
 	-- Warehouse progression (Stage 6). Level is permanent player progression;
 	-- physical plot assignment stays session-local. Slots beyond the 6
@@ -124,9 +123,7 @@ local GameConfig = {
 		{ DisplaySlots = 36, StorageCapacity = 500, UpgradeCost = 100000, MinWins = 60 },
 	},
 
-	-- First progression gate (teaser only — no premium gameplay yet).
-	PremiumAuctionsWinsRequired = 5,
-	PremiumAuctionsValueRequired = 5000,
+	DisplaySlotCount = 6, -- legacy default = Level 1 slots; levels override
 
 	-- Value formula: FinalValue = clamp(floor(BaseValue * RarityMult * ConditionMult), Min/Max)
 	-- ConditionMult = ConditionFloor + (1 - ConditionFloor) * (Condition / 100)

@@ -1,5 +1,5 @@
 --!nonstrict
--- StorageAuction M1 — server-authoritative inventory.
+-- StorageAuction — server-authoritative inventory.
 -- Items are owned server-side. Client receives copies for display only.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

@@ -1,13 +1,13 @@
 --!nonstrict
--- StorageAuction M1 — map behavior over STUDIO-AUTHORED geometry.
+-- StorageAuction — map behavior over STUDIO-AUTHORED geometry.
 --
 -- OWNERSHIP RULE: Studio owns static world geometry. This module owns
 -- behavior/state only. It NEVER creates map parts. It locates
 --   Workspace.StorageAuctionMap
 -- validates the required pieces, and drives door/barrier/prompts/bounds.
 --
--- Expected hierarchy (see tools/BuildMapOnce.luau, the one-time migration
--- script that generated the initial layout):
+-- Expected hierarchy (canonical source: map/StorageAuctionMap in version
+-- control, synced via Argon SERVER priority; see AGENTS.md):
 --
 --   Workspace
 --   → StorageAuctionMap (Model)
@@ -61,7 +61,7 @@ local function failMissing(list)
 	error(
 		"[SA] Incomplete StorageAuctionMap — missing: "
 			.. table.concat(list, ", ")
-			.. ". Restore them in Studio (see tools/BuildMapOnce.luau), then Play again.",
+			.. ". Restore them in Studio from map/StorageAuctionMap (see AGENTS.md), then Play again.",
 		0
 	)
 end
@@ -254,13 +254,13 @@ end
 
 -- Locate + validate the Studio-authored map. Errors clearly on missing
 -- REQUIRED pieces (never silently rebuilds). Returns map-level handles plus
--- the per-unit tables AuctionService rotates between:
---   { Map, WarehouseTemplate, Units = { [1], [2] } }
+-- the per-unit tables (one independent auction session each):
+--   { Map, WarehouseTemplate, ATM, Units = { [1], [2], [3] } }
 function MapBuilder.GetHandles()
 	local workspace = game.Workspace
 	local map = workspace:WaitForChild(MAP_NAME, 15)
 	if not map then
-		failMissing({ "Workspace." .. MAP_NAME .. " (run tools/BuildMapOnce.luau once, then Save the place)" })
+		failMissing({ "Workspace." .. MAP_NAME .. " (restore map/StorageAuctionMap from version control with Argon SERVER sync, then Save the place)" })
 	end
 
 	-- LEGACY MIGRATION ONLY: destroy a stale PlayerShowroom left in old
@@ -342,7 +342,7 @@ function MapBuilder.GetHandles()
 	}
 end
 
--- M1 door behavior: appear/disappear only.
+-- Door behavior: appear/disappear only.
 function MapBuilder.SetDoorOpen(handles, open)
 	local door = handles and handles.Door
 	if not door or door.Parent == nil then

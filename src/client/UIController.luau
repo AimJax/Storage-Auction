@@ -1,5 +1,5 @@
 --!nonstrict
--- StorageAuction M1 — compact client UI (built in code, no Studio GUI needed).
+-- StorageAuction — compact client UI (built in code, no Studio GUI needed).
 -- Design: small corner pills + one contextual bid button + auto-fading toasts.
 -- Nothing permanently covers the center or sides of the screen.
 -- All status rendering is state-driven via UpdateStatus; stale text from a
@@ -233,19 +233,9 @@ function UIController.Build()
 		TextSize = 11,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	}, inv)
-	refs.PremiumLabel = mk("TextLabel", {
-		Size = UDim2.new(1, -12, 0, 16),
-		Position = UDim2.new(0, 6, 0, 46),
-		BackgroundTransparency = 1,
-		Text = "PREMIUM: LOCKED",
-		TextColor3 = Color3.fromRGB(150, 150, 160),
-		Font = Enum.Font.Gotham,
-		TextSize = 10,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-	}, inv)
 	refs.InventoryList = mk("ScrollingFrame", {
-		Size = UDim2.new(1, -12, 1, -68),
-		Position = UDim2.new(0, 6, 0, 64),
+		Size = UDim2.new(1, -12, 1, -50),
+		Position = UDim2.new(0, 6, 0, 46),
 		BackgroundTransparency = 1,
 		ScrollBarThickness = 4,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
@@ -981,16 +971,6 @@ function UIController.UpdateStats(stats)
 	if refs.StatsLabel then
 		refs.StatsLabel.Text = string.format("Collection $%s · Won %d",
 			formatMoney(tonumber(stats.collectionValue) or 0), tonumber(stats.auctionsWon) or 0)
-	end
-	if refs.PremiumLabel then
-		if stats.premiumUnlocked then
-			refs.PremiumLabel.Text = "PREMIUM AUCTIONS: UNLOCKED"
-			refs.PremiumLabel.TextColor3 = Color3.fromRGB(120, 230, 130)
-		else
-			refs.PremiumLabel.Text = string.format("PREMIUM: LOCKED (%d wins or $%s)",
-				tonumber(stats.winsRequired) or 5, formatMoney(tonumber(stats.valueRequired) or 5000))
-			refs.PremiumLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
-		end
 	end
 end
 

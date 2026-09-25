@@ -1,13 +1,11 @@
 --!nonstrict
--- StorageAuction MVP — first progression layer (session-only foundation).
+-- StorageAuction — progression stats (AuctionsWon + collection value).
 --
 -- Tracks per player:
 --   AuctionsWon: incremented when a real player wins and pays.
 --   CollectionValue: sum of FinalValue over currently KEPT inventory items.
---   PremiumUnlocked: AuctionsWon >= threshold OR CollectionValue >= threshold.
 --
--- Session-only for now; structured so DataStore fields can be added next
--- (see PlayerDataService) without changing callers.
+-- Runtime only; PlayerDataService persists/restores AuctionsWon.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -40,10 +38,6 @@ function PlayerStatsService.GetStats(player)
 	return {
 		auctionsWon = won,
 		collectionValue = value,
-		premiumUnlocked = won >= GameConfig.PremiumAuctionsWinsRequired
-			or value >= GameConfig.PremiumAuctionsValueRequired,
-		winsRequired = GameConfig.PremiumAuctionsWinsRequired,
-		valueRequired = GameConfig.PremiumAuctionsValueRequired,
 	}
 end
 
