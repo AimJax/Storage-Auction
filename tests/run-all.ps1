@@ -70,7 +70,7 @@ foreach ($f in $files) {
 	[IO.File]::WriteAllText((Join-Path $ExecDir $f.d), $t, [Text.UTF8Encoding]::new($false))
 }
 
-$suites = @("harden1", "harden2", "conc3", "tier4", "debt5a", "persist5b", "warehouse6")
+$suites = @("harden1", "harden2", "conc3", "tier4", "debt5a", "persist5b", "warehouse6", "shutdown1")
 if (-not $Quick) {
 	$suites += @("tiergen", "main")
 }

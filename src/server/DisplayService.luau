@@ -1,5 +1,5 @@
 --!nonstrict
--- StorageAuction MVP — display slot assignments inside player warehouses.
+-- StorageAuction — display slot assignments inside player warehouses.
 --
 -- Tracks, per player, which owned inventory item (by InstanceId) sits in
 -- each display slot, and builds a small physical proxy on that player's
@@ -284,7 +284,7 @@ function DisplayService.GetPersistentAssignments(player)
 	return out
 end
 
--- Restore persisted assignments (Stage 6): keep only integer slots within
+-- Restore persisted assignments: keep only integer slots within
 -- the player's level allowance, string ids present in the restored
 -- inventory, and no id twice. Proxies rebuild only when a warehouse exists
 -- (plot claim refreshes them separately). Returns count kept.

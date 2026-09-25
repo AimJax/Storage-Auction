@@ -1,14 +1,16 @@
 --!nonstrict
--- StorageAuction Stage 5B — durable progression/economy persistence.
+-- StorageAuction — durable progression/economy persistence.
 -- Same SA_M1_v1 store, extended backward-compatible schema:
---   { Cash, Inventory, AuctionsWon, Debt, RecoveryAvailableAt, SavedAt, SchemaVersion }
+--   { Cash, Inventory, AuctionsWon, Debt, RecoveryAvailableAt,
+--     WarehouseLevel, DisplayAssignments, SavedAt, SchemaVersion }
 -- Wrapped in pcall so Studio playtests WITHOUT DataStore API access still work.
 -- Enable "Enable Studio Access to API Services" in Game Settings for real saves.
 --
 -- Load order (no half-loaded state): raw data -> sanitize/defaults ->
--- Economy Cash -> Inventory items -> Stats wins -> Debt/cooldown -> push all
--- to client -> mark loaded. Save snapshots BEFORE any ClearPlayer runs
--- (init.server calls Save first); unloaded players are never saved.
+-- Economy Cash -> Inventory items -> Stats wins -> WarehouseLevel ->
+-- Debt/cooldown -> DisplayAssignments -> push all to client -> mark loaded.
+-- Save snapshots BEFORE any ClearPlayer runs (init.server calls Save first);
+-- unloaded players are never saved.
 
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
@@ -237,19 +239,21 @@ local function snapshot(player)
 	}
 end
 
+-- Returns true on success, false when skipped or failed (warnings only;
+-- gameplay never branches on this).
 function PlayerDataService.Save(player)
 	if not store then
-		return
+		return false
 	end
 	if not player or loaded[player.UserId] ~= true then
 		-- Never overwrite remote data with defaults for unloaded players.
-		return
+		return false
 	end
 	if saveAllowed[player.UserId] ~= true then
 		-- Load failed or store unavailable: session is playable but must
 		-- never persist. Explicit (not silent) so logs show the reason.
 		warn("[SA] Save skipped for " .. player.Name .. " (load did not produce saveable state).")
-		return
+		return false
 	end
 	-- Snapshot BEFORE any yield so retries store one consistent record.
 	local record = snapshot(player)
@@ -267,7 +271,9 @@ function PlayerDataService.Save(player)
 	end
 	if not success then
 		warn("[SA] Save failed for " .. player.Name .. ": " .. tostring(result))
+		return false
 	end
+	return true
 end
 
 function PlayerDataService.ClearPlayer(player)

@@ -1,5 +1,5 @@
 --!nonstrict
--- StorageAuction — shared game tuning (Milestone 1).
+-- StorageAuction — shared game tuning.
 -- Single source of truth for timings, economy, and auction rules.
 -- Edit values here, never scatter magic numbers in services.
 
@@ -106,12 +106,12 @@ local GameConfig = {
 	RummageDuration = 90,
 	CleanupDuration = 5,
 
-	-- Showroom (MVP): fixed personal-collection slots, one shared area.
+	-- Showroom: fixed personal-collection slots, one shared area.
 	-- Display assignments are tracked per player so per-player showrooms
 	-- can replace the shared area later without changing the record shape.
 	DisplaySlotCount = 6, -- legacy default = Level 1 slots; levels override
 
-	-- Warehouse progression (Stage 6). Level is permanent player progression;
+	-- Warehouse progression. Level is permanent player progression;
 	-- physical plot assignment stays session-local. Slots beyond the 6
 	-- template markers use a runtime grid (no map changes). StorageCapacity
 	-- is gameplay inventory cap (grandfathered over-cap keeps, can't Keep new).
@@ -122,8 +122,6 @@ local GameConfig = {
 		{ DisplaySlots = 24, StorageCapacity = 200, UpgradeCost = 35000,  MinWins = 25 },
 		{ DisplaySlots = 36, StorageCapacity = 500, UpgradeCost = 100000, MinWins = 60 },
 	},
-
-	DisplaySlotCount = 6, -- legacy default = Level 1 slots; levels override
 
 	-- Value formula: FinalValue = clamp(floor(BaseValue * RarityMult * ConditionMult), Min/Max)
 	-- ConditionMult = ConditionFloor + (1 - ConditionFloor) * (Condition / 100)
@@ -167,7 +165,8 @@ local GameConfig = {
 	NPCReactionPause = 0.9,  -- seconds after any bid before NPCs may respond
 	AvgHiddenItemValue = 200, -- baseline each hidden box is worth to NPC guessers
 
-	-- ATM loans (Stage 5A, runtime-only). Fixed offers, one active loan max.
+	-- ATM loans. Fixed offers, one active loan max. Debt/recovery state is
+	-- runtime-owned by DebtService and persisted with the player record.
 	-- Debt = RemainingDebt (the Repay amount). No interest over time.
 	Loans = {
 		A = { Borrow = 250, Repay = 300, MinWins = 0, MinNetWorth = 0 },
@@ -184,7 +183,7 @@ local GameConfig = {
 	RecoveryTargetCash = 125,
 	RecoveryCooldown = 300,
 
-	-- Persistence (Stage 5B/6). Same SA_M1_v1 store, extended schema.
+	-- Persistence. Same SA_M1_v1 store, extended schema.
 	PersistSchemaVersion = 2,
 	PersistInventoryLimit = 500, -- max kept items per save; oldest-valid kept first
 	PersistAutosaveInterval = 120, -- seconds between autosaves (loaded players only)
