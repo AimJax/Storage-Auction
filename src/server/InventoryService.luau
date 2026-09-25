@@ -48,10 +48,28 @@ end
 
 function InventoryService.GetItems(player)
 	local list = inventories[player.UserId] or {}
-	-- Return a copy so callers can't mutate server state.
+	-- Defensive copies (including Modifiers) so callers can never mutate
+	-- server ownership records through a shared reference.
 	local copy = {}
 	for i, it in ipairs(list) do
-		copy[i] = it
+		local mods = {}
+		if typeof(it.Modifiers) == "table" then
+			for k, v in pairs(it.Modifiers) do
+				mods[k] = v
+			end
+		end
+		copy[i] = {
+			InstanceId = it.InstanceId,
+			ItemId = it.ItemId,
+			Name = it.Name,
+			BaseValue = it.BaseValue,
+			ModelKey = it.ModelKey,
+			Rarity = it.Rarity,
+			Condition = it.Condition,
+			ConditionName = it.ConditionName,
+			FinalValue = it.FinalValue,
+			Modifiers = mods,
+		}
 	end
 	return copy
 end

@@ -112,15 +112,26 @@ local function getUnitHandles(map, unitName, areaName, req, missing)
 	local bidCenter = req(area, "BidCenter", areaPath .. ".BidCenter")
 
 	-- Containers: discover every Container_* part (freely repositionable).
+	-- Duplicate ContainerIds fail loudly instead of silently overwriting a box.
 	local containers = {}
 	if unit then
+		local parts = {}
 		for _, child in ipairs(unit:GetChildren()) do
 			if child:IsA("BasePart") and string.match(child.Name, "^Container_") then
-				local id = child:GetAttribute("ContainerId")
-				if typeof(id) ~= "string" or id == "" then
-					id = child.Name
-					child:SetAttribute("ContainerId", id)
-				end
+				table.insert(parts, child)
+			end
+		end
+		table.sort(parts, function(a, b) return a.Name < b.Name end)
+		for _, child in ipairs(parts) do
+			local id = child:GetAttribute("ContainerId")
+			if typeof(id) ~= "string" or id == "" then
+				id = child.Name
+				child:SetAttribute("ContainerId", id)
+			end
+			if containers[id] ~= nil then
+				table.insert(missing, unitPath .. "." .. child.Name
+					.. " reuses ContainerId '" .. id .. "' (ids must be unique per unit)")
+			else
 				containers[id] = child
 			end
 		end
@@ -177,7 +188,14 @@ local function getUnitHandles(map, unitName, areaName, req, missing)
 	barrier.CanTouch = false
 	barrier.CanQuery = false
 	local index = 0
+	-- Deterministic order (sorted by part name): prompt ObjectText numbering
+	-- must not depend on pairs() iteration order.
+	local promptBoxes = {}
 	for _, box in pairs(containers) do
+		table.insert(promptBoxes, box)
+	end
+	table.sort(promptBoxes, function(a, b) return a.Name < b.Name end)
+	for _, box in ipairs(promptBoxes) do
 		index += 1
 		standardPrompt(box, index)
 	end
@@ -185,11 +203,17 @@ local function getUnitHandles(map, unitName, areaName, req, missing)
 	local floorTop = floorPart.Position.Y + floorPart.Size.Y / 2
 	local center: Vector3
 	local boundHalf: Vector3
+	local boundCFrame: CFrame? = nil
 	if unitBounds then
+		-- Preserve orientation: rotated bounds test in object-local space so
+		-- a yawed marker keeps its true footprint (unrotated units behave
+		-- exactly as before).
+		boundCFrame = unitBounds.CFrame
 		center = unitBounds.Position
 		boundHalf = unitBounds.Size / 2
 	else
 		local cf, size = unit:GetBoundingBox()
+		boundCFrame = cf
 		center = cf.Position
 		boundHalf = size / 2
 	end
@@ -221,6 +245,7 @@ local function getUnitHandles(map, unitName, areaName, req, missing)
 		Containers = containers,
 		UnitCenter = unitCenter,
 		BoundHalf = boundHalf,
+		BoundCFrame = boundCFrame, -- object-space inside test (rotation-safe)
 		FloorTop = floorTop,
 		BidCenter = bidCenter.Position,
 		ReturnCFrame = returnPoint.CFrame,
@@ -390,6 +415,33 @@ function MapBuilder.SetPromptsEnabled(handles, enabled)
 	end
 end
 
+-- Authoritative container range: player root must be within the box's own
+-- ProximityPrompt.MaxActivationDistance (+2 stud tolerance) in 3D. The
+-- physical prompt path and the OpenContainer remote share this gate, so a
+-- remote invocation from across the map rejects while prompt use is unchanged.
+function MapBuilder.IsWithinContainerRange(handles, player, containerId)
+	if not handles or not handles.Containers or not player then
+		return false
+	end
+	local box = handles.Containers[containerId]
+	if not box then
+		return false
+	end
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	local prompt = box:FindFirstChildOfClass("ProximityPrompt")
+	local maxDist = 10
+	if prompt then
+		maxDist = tonumber(prompt.MaxActivationDistance) or 10
+	end
+	maxDist += 2
+	local delta = root.Position - box.Position
+	return delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z <= maxDist * maxDist
+end
+
 -- XZ distance check against the physical BidCenter part. Y is ignored so
 -- jumping/seating never matters.
 function MapBuilder.IsWithinBidRadius(handles, player, radius)
@@ -408,6 +460,8 @@ end
 
 -- Inside test against the UnitBounds marker (or unit extents fallback),
 -- derived from live part positions — move the unit in Studio and this follows.
+-- Object-local test: rotated markers keep their true footprint. Unrotated
+-- markers behave exactly as the old axis-aligned test.
 function MapBuilder.IsPlayerInsideUnit(handles, player)
 	if not handles or not player then
 		return false
@@ -423,6 +477,13 @@ function MapBuilder.IsPlayerInsideUnit(handles, player)
 	local pos = root.Position
 	local center = handles.UnitCenter
 	local half = handles.BoundHalf
+	if handles.BoundCFrame then
+		local localPos = handles.BoundCFrame:Inverse() * pos
+		return math.abs(localPos.X) <= half.X
+			and math.abs(localPos.Z) <= half.Z
+			and pos.Y >= handles.FloorTop - 3
+			and pos.Y <= handles.FloorTop + half.Y * 2 + 3
+	end
 	return math.abs(pos.X - center.X) <= half.X
 		and math.abs(pos.Z - center.Z) <= half.Z
 		and pos.Y >= handles.FloorTop - 3

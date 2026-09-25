@@ -29,6 +29,7 @@ local DisplayService = nil
 local DebtService = nil
 local WarehouseService = nil
 local PlayerDataService = nil
+local RemoteGuardService = nil
 
 -- Sessions own ALL mutable auction state. Nothing auction-related lives in
 -- module globals (only service refs + the session list itself).
@@ -118,6 +119,15 @@ local function leadingCommitment(userId, exceptSession)
 	return total
 end
 
+-- Read-only total across ALL sessions (used by warehouse upgrades so they
+-- never consume cash already committed to leading bids).
+function AuctionService.GetLeadingCommitment(player)
+	if not player then
+		return 0
+	end
+	return leadingCommitment(player.UserId, nil)
+end
+
 local function snapshotOf(s)
 	local center = s.Handles and s.Handles.BidCenter
 	return {
@@ -125,6 +135,8 @@ local function snapshotOf(s)
 		tierId = s.TierId,
 		tierDisplayName = s.Tier.DisplayName or s.TierId,
 		tierRequirement = s.Tier.RequirementText, -- static text or nil; UX only
+		startingBid = s.Tier.StartingBid, -- explicit opening bid (internal
+		-- CurrentBid sits one increment below so the first valid bid lands here)
 		state = s.State,
 		timeLeft = math.floor(timeLeft(s) + 0.5),
 		currentBid = s.CurrentBid,
@@ -370,6 +382,9 @@ function AuctionService.TryOpenContainer(unitIndex, player, containerId)
 	if not item then
 		return false, "Unknown container."
 	end
+	if not MapBuilder.IsWithinContainerRange(s.Handles, player, containerId) then
+		return false, "Move closer to the box to open it."
+	end
 	s.ContainerOpened[containerId] = true
 	s.PendingByUser[player.UserId] = item
 	MapBuilder.MarkContainerOpened(s.Handles, containerId)
@@ -526,7 +541,7 @@ function AuctionService.GetSessionSnapshot(unitIndex)
 	return snapshotOf(s)
 end
 
--- Full picture for client init/rejoin: BOTH sessions, keyed by unitIndex,
+-- Full picture for client init/rejoin: ALL sessions, keyed by unitIndex,
 -- so a joining client never waits for the next state transition.
 function AuctionService.GetSnapshot()
 	local auctions = {}
@@ -740,6 +755,7 @@ function AuctionService.Init(deps)
 	DebtService = deps.DebtService
 	WarehouseService = deps.WarehouseService
 	PlayerDataService = deps.PlayerDataService
+	RemoteGuardService = deps.RemoteGuardService
 
 	-- One independent session per physical unit. Tier is fixed per unit:
 	-- Unit 1 = Budget, Unit 2 = Standard, Unit 3 = HighRoller (GameConfig).
@@ -755,9 +771,20 @@ function AuctionService.Init(deps)
 
 	-- Wire RemoteFunctions. Clients address a session explicitly by
 	-- unitIndex; the server validates everything against THAT session.
+	-- Mutating remotes pass a lightweight spam throttle first (normal
+	-- clicks unaffected; full validation still applies afterwards).
+	local function throttled(player, action)
+		if RemoteGuardService then
+			return RemoteGuardService.Check(player, action)
+		end
+		return true
+	end
 	local placeBid = Remotes:FindFirstChild(GameConfig.RemoteNames.PlaceBid)
 	if placeBid and placeBid:IsA("RemoteFunction") then
 		placeBid.OnServerInvoke = function(player, unitIndex, amount)
+			if not throttled(player, "PlaceBid") then
+				return { ok = false, message = "Too fast. Try again.", snapshot = AuctionService.GetSessionSnapshot(unitIndex) }
+			end
 			local ok, msg = AuctionService.TryBid(unitIndex, player, amount, false, nil)
 			return { ok = ok, message = msg, snapshot = AuctionService.GetSessionSnapshot(unitIndex) }
 		end
@@ -765,6 +792,9 @@ function AuctionService.Init(deps)
 	local openContainer = Remotes:FindFirstChild(GameConfig.RemoteNames.OpenContainer)
 	if openContainer and openContainer:IsA("RemoteFunction") then
 		openContainer.OnServerInvoke = function(player, unitIndex, containerId)
+			if not throttled(player, "OpenContainer") then
+				return { ok = false, result = "Too fast. Try again.", snapshot = AuctionService.GetSessionSnapshot(unitIndex) }
+			end
 			local ok, result = AuctionService.TryOpenContainer(unitIndex, player, containerId)
 			return { ok = ok, result = result, snapshot = AuctionService.GetSessionSnapshot(unitIndex) }
 		end
@@ -772,6 +802,9 @@ function AuctionService.Init(deps)
 	local sellItem = Remotes:FindFirstChild(GameConfig.RemoteNames.SellItem)
 	if sellItem and sellItem:IsA("RemoteFunction") then
 		sellItem.OnServerInvoke = function(player, unitIndex, instanceId)
+			if not throttled(player, "SellItem") then
+				return { ok = false, result = "Too fast. Try again.", cash = EconomyService.GetCash(player) }
+			end
 			local ok, result = AuctionService.TrySellItem(unitIndex, player, instanceId)
 			return { ok = ok, result = result, cash = EconomyService.GetCash(player) }
 		end
@@ -779,6 +812,9 @@ function AuctionService.Init(deps)
 	local keepItem = Remotes:FindFirstChild(GameConfig.RemoteNames.KeepItem)
 	if keepItem and keepItem:IsA("RemoteFunction") then
 		keepItem.OnServerInvoke = function(player, unitIndex, instanceId)
+			if not throttled(player, "KeepItem") then
+				return { ok = false, result = "Too fast. Try again." }
+			end
 			local ok, result = AuctionService.TryKeepItem(unitIndex, player, instanceId)
 			return { ok = ok, result = result }
 		end

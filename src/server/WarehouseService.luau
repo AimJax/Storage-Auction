@@ -22,6 +22,8 @@ local EconomyService = nil
 local PlayerStatsService = nil
 local InventoryService = nil
 local PlayerDataService = nil
+local AuctionService = nil
+local DisplayService = nil
 local Remotes = nil
 
 -- [UserId] = { root = Model, slots = { [i] = Part }, level, unlockedSlots, upgrades }
@@ -132,20 +134,34 @@ local function hideTemplate(template)
 	end
 end
 
+-- Physical markers: discover authored Slot_N parts dynamically (any count,
+-- any gaps), sorted numerically for deterministic order. The six current
+-- markers stay exactly where they are; the procedural overflow grid still
+-- starts after the highest PHYSICAL slot found here.
 local function collectSlots(root)
 	local slotsFolder = root:FindFirstChild("DisplaySlots")
 	local slots = {}
 	if slotsFolder then
-		for i = 1, GameConfig.DisplaySlotCount do
-			local slot = slotsFolder:FindFirstChild("Slot_" .. i)
-			if slot and slot:IsA("BasePart") then
-				slots[i] = slot
-			else
-				break
+		local found = {}
+		for _, child in ipairs(slotsFolder:GetChildren()) do
+			local n = tonumber(string.match(child.Name, "^Slot_(%d+)$"))
+			if n and n >= 1 and child:IsA("BasePart") then
+				found[n] = child
 			end
 		end
+		local order = {}
+		for n, _ in pairs(found) do
+			table.insert(order, n)
+		end
+		table.sort(order)
+		local maxIndex = 0
+		for _, n in ipairs(order) do
+			slots[n] = found[n]
+			maxIndex = n
+		end
+		return slots, maxIndex
 	end
-	return slots
+	return slots, 0
 end
 
 -- Level definitions + per-player level. Unknown/empty levels default to 1.
@@ -266,7 +282,7 @@ function WarehouseService.GetSlotPosition(player, index)
 	if physical then
 		return physical.Position
 	end
-	local cell = gridOffsets[index - #entry.slots]
+	local cell = gridOffsets[index - (entry.physicalSlots or 0)]
 	if not cell then
 		return nil
 	end
@@ -281,7 +297,7 @@ function WarehouseService.GetMaxSlotIndex(player)
 	local entry = WarehouseService.GetWarehouse(player)
 	local physical = 0
 	if entry then
-		physical = #entry.slots
+		physical = entry.physicalSlots or 0
 	end
 	return physical + #gridOffsets
 end
@@ -354,6 +370,20 @@ local function createTerminal(clone, level)
 	prompt.RequiresLineOfSight = false
 	prompt.Parent = term
 	prompt.Triggered:Connect(function(player)
+		-- Only the warehouse owner may open their own upgrade UI, and only
+		-- from near their terminal. Anyone else gets a targeted message.
+		local entry = warehouses[player.UserId]
+		local mine = entry and entry.root and term.Parent == entry.root
+		if not mine then
+			local ev = Remotes and Remotes:FindFirstChild(GameConfig.RemoteNames.Notify)
+			if ev then
+				ev:FireClient(player, "This upgrade terminal belongs to another player.")
+			end
+			return
+		end
+		if not WarehouseService.IsNearTerminal(player) then
+			return
+		end
 		local ev = Remotes and Remotes:FindFirstChild(GameConfig.RemoteNames.WarehouseOpened)
 		if ev then
 			ev:FireClient(player)
@@ -362,12 +392,43 @@ local function createTerminal(clone, level)
 	return term
 end
 
+-- Range gate shared by the terminal prompt and the UpgradeWarehouse remote:
+-- caller must stand within the prompt's own MaxActivationDistance (+2).
+function WarehouseService.IsNearTerminal(player)
+	if not player then
+		return false
+	end
+	local entry = warehouses[player.UserId]
+	if not entry or not entry.root or entry.root.Parent == nil then
+		return false
+	end
+	local term = entry.root:FindFirstChild("UpgradeTerminal")
+	if not term or not term:IsA("BasePart") then
+		return false
+	end
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	local prompt = term:FindFirstChildOfClass("ProximityPrompt")
+	local maxDist = 10
+	if prompt then
+		maxDist = tonumber(prompt.MaxActivationDistance) or 10
+	end
+	maxDist += 2
+	local delta = root.Position - term.Position
+	return delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z <= maxDist * maxDist
+end
+
 function WarehouseService.Init(deps)
 	MapHandles = deps.MapHandles
 	EconomyService = deps.EconomyService
 	PlayerStatsService = deps.PlayerStatsService
 	InventoryService = deps.InventoryService
 	PlayerDataService = deps.PlayerDataService
+	AuctionService = deps.AuctionService
+	DisplayService = deps.DisplayService
 	Remotes = deps.Remotes
 
 	folder = game.Workspace:FindFirstChild(FOLDER_NAME)
@@ -438,9 +499,11 @@ function WarehouseService.BuildFor(player, plot)
 	-- Ownership is shown ONLY on the plot roadside billboard (PlotService);
 	-- warehouses carry no name signage (see ticket: rooftop sign removed).
 	local level = WarehouseService.GetLevel(player)
+	local foundSlots, physicalCount = collectSlots(clone)
 	local entry = {
 		root = clone,
-		slots = collectSlots(clone),
+		slots = foundSlots,
+		physicalSlots = physicalCount,
 		plotIndex = plot.index,
 		level = level,
 		unlockedSlots = levelDef(level).DisplaySlots,
@@ -558,6 +621,12 @@ end
 -- Server-authoritative upgrade. Client sends nothing but the call.
 -- Validates warehouse ownership, level ladder, wins, and cash; deducts via
 -- normal EconomyService (debt never intercepts, never auto-repays).
+-- Server-authoritative upgrade. Client sends nothing but the call.
+-- Validates warehouse ownership, terminal proximity, level ladder, wins,
+-- and SPENDABLE cash (cash minus active auction leading commitments, so an
+-- upgrade can never starve a bid the player is currently winning). Deducts
+-- via normal EconomyService (debt never intercepts, never auto-repays).
+-- Refreshes display proxies so the new slot count applies immediately.
 function WarehouseService.UpgradeWarehouse(player)
 	if not player then
 		return false, "Invalid player."
@@ -568,6 +637,9 @@ function WarehouseService.UpgradeWarehouse(player)
 	local entry = WarehouseService.GetWarehouse(player)
 	if not entry then
 		return false, "Claim a warehouse plot first."
+	end
+	if not WarehouseService.IsNearTerminal(player) then
+		return false, "Move closer to your upgrade terminal."
 	end
 	local defs = GameConfig.WarehouseLevels
 	local level = WarehouseService.GetLevel(player)
@@ -580,7 +652,15 @@ function WarehouseService.UpgradeWarehouse(player)
 		return false, string.format("Requires %d auction wins (you have %d).", next.MinWins, wins)
 	end
 	local cost = tonumber(next.UpgradeCost) or 0
-	if (EconomyService and EconomyService.GetCash(player) or 0) < cost then
+	local committed = 0
+	if AuctionService and AuctionService.GetLeadingCommitment then
+		committed = AuctionService.GetLeadingCommitment(player) or 0
+	end
+	local spendable = (EconomyService and EconomyService.GetCash(player) or 0) - committed
+	if spendable < cost then
+		if committed > 0 then
+			return false, string.format("Requires $%d spendable cash ($%d tied in leading bids).", cost, committed)
+		end
 		return false, string.format("Requires $%d cash.", cost)
 	end
 	if cost > 0 then
@@ -589,6 +669,9 @@ function WarehouseService.UpgradeWarehouse(player)
 		end
 	end
 	setLevel(player, level + 1)
+	if DisplayService and DisplayService.RefreshProxies then
+		DisplayService.RefreshProxies(player)
+	end
 	return true, string.format("Warehouse upgraded to Lv %d (%d slots, %d storage).",
 		level + 1, defs[level + 1].DisplaySlots, defs[level + 1].StorageCapacity)
 end

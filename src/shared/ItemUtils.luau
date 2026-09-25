@@ -7,9 +7,29 @@ local GameConfig = require(script.Parent.GameConfig)
 local RarityConfig = require(script.Parent.RarityConfig)
 local ItemDefinitions = require(script.Parent.ItemDefinitions)
 
+local HttpService = nil
+pcall(function()
+	HttpService = game:GetService("HttpService")
+end)
+
 local ItemUtils = {}
 
 local nextInstanceSeq = 0
+
+-- Globally robust instance ids: GUID when available, sequenced fallback
+-- otherwise. Old m1_... ids stay valid forever (no migration, no wipe).
+local function newInstanceId()
+	nextInstanceSeq += 1
+	if HttpService then
+		local ok, guid = pcall(function()
+			return HttpService:GenerateGUID(false)
+		end)
+		if ok and typeof(guid) == "string" and guid ~= "" then
+			return "sa_" .. guid
+		end
+	end
+	return "m1_" .. tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(nextInstanceSeq)
+end
 
 function ItemUtils.RollRarity(rng, luck)
 	rng = rng or Random.new()
@@ -113,9 +133,8 @@ function ItemUtils.GenerateInstance(rng, opts)
 	if opts.ValueScaleMin or opts.ValueScaleMax then
 		scale = rng:NextNumber(opts.ValueScaleMin or 1, opts.ValueScaleMax or 1)
 	end
-	nextInstanceSeq += 1
 	return {
-		InstanceId = "m1_" .. tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(nextInstanceSeq),
+		InstanceId = newInstanceId(),
 		ItemId = def.Id,
 		Name = def.Name,
 		BaseValue = def.BaseValue,

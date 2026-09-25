@@ -15,6 +15,7 @@ local DebtService = {}
 local EconomyService = nil
 local PlayerStatsService = nil
 local PlayerDataService = nil
+local RemoteGuardService = nil
 local Remotes = nil
 local ATMPrompt = nil
 
@@ -77,6 +78,41 @@ local function loanEligibility(player, loanId, loan)
 	return false, loanGateMessage(loanId, loan)
 end
 
+-- Physical ATM authority for MUTATING actions: the player must stand near
+-- the real ATM Body/prompt (its MaxActivationDistance + 2 tolerance).
+-- GetATMState stays readable from anywhere; loans/recovery do not.
+local function isNearATM(player)
+	if not ATMPrompt or not player then
+		return false
+	end
+	local body = ATMPrompt:FindFirstChild("Body")
+	local anchor = nil
+	if body and body:IsA("BasePart") then
+		anchor = body
+	elseif ATMPrompt:IsA("BasePart") then
+		anchor = ATMPrompt
+	end
+	if not anchor then
+		return false
+	end
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	local prompt = anchor:FindFirstChildOfClass("ProximityPrompt")
+	if not prompt and ATMPrompt then
+		prompt = ATMPrompt:FindFirstChildOfClass("ProximityPrompt")
+	end
+	local maxDist = 10
+	if prompt then
+		maxDist = tonumber(prompt.MaxActivationDistance) or 10
+	end
+	maxDist += 2
+	local delta = root.Position - anchor.Position
+	return delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z <= maxDist * maxDist
+end
+
 -- Full ATM panel state for one player (server-computed, safe to render).
 function DebtService.GetState(player)
 	local cash = EconomyService.GetCash(player)
@@ -134,6 +170,9 @@ function DebtService.TakeLoan(player, loanId)
 	if not loan then
 		return false, "Unknown loan offer."
 	end
+	if not isNearATM(player) then
+		return false, "Visit the ATM to use it."
+	end
 	local st = stateFor(player.UserId, true)
 	if st.debt > 0 then
 		return false, "You already have an active loan. Repay it first."
@@ -186,6 +225,9 @@ function DebtService.ClaimRecovery(player)
 	end
 	if PlayerDataService and not PlayerDataService.IsLoaded(player) then
 		return false, PlayerDataService.NotReadyMessage()
+	end
+	if not isNearATM(player) then
+		return false, "Visit the ATM to use it."
 	end
 	local cash = EconomyService.GetCash(player)
 	if cash >= GameConfig.RecoveryThreshold then
@@ -255,6 +297,7 @@ function DebtService.Init(deps)
 	EconomyService = deps.EconomyService
 	PlayerStatsService = deps.PlayerStatsService
 	PlayerDataService = deps.PlayerDataService
+	RemoteGuardService = deps.RemoteGuardService
 	Remotes = deps.Remotes
 	ATMPrompt = deps.ATMPrompt
 
@@ -267,6 +310,9 @@ function DebtService.Init(deps)
 	local takeLoan = Remotes:FindFirstChild(GameConfig.RemoteNames.TakeLoan)
 	if takeLoan and takeLoan:IsA("RemoteFunction") then
 		takeLoan.OnServerInvoke = function(player, loanId)
+			if RemoteGuardService and not RemoteGuardService.Check(player, "TakeLoan") then
+				return { ok = false, message = "Too fast. Try again.", state = DebtService.GetState(player) }
+			end
 			local ok, msg = DebtService.TakeLoan(player, loanId)
 			return { ok = ok, message = msg, state = DebtService.GetState(player) }
 		end
@@ -274,6 +320,9 @@ function DebtService.Init(deps)
 	local claimRecovery = Remotes:FindFirstChild(GameConfig.RemoteNames.ClaimRecovery)
 	if claimRecovery and claimRecovery:IsA("RemoteFunction") then
 		claimRecovery.OnServerInvoke = function(player)
+			if RemoteGuardService and not RemoteGuardService.Check(player, "ClaimRecovery") then
+				return { ok = false, result = "Too fast. Try again.", state = DebtService.GetState(player) }
+			end
 			local ok, result = DebtService.ClaimRecovery(player)
 			return { ok = ok, result = result, state = DebtService.GetState(player) }
 		end

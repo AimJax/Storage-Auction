@@ -656,9 +656,9 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 
 	if transitioned then
 		UIController.HideToast()
-		if state ~= "Rummaging" then
-			UIController.HideReveal()
-		end
+		-- NOTE: the reveal panel is NEVER auto-hidden here. It closes only
+		-- on Sell/Keep success, server closeReveal, or explicit resolution,
+		-- so walking between units or out of radius cannot strand a decision.
 	end
 
 	if not showAuction then
@@ -695,13 +695,16 @@ function UIController.UpdateStatus(snapshot, cash, localPlayerName, bidAllowed)
 		elseif state == "Bidding" then
 			local who = snapshot.bidder
 			if who == nil or who == "" then
+				-- No bids yet: show the true opening bid (internal CurrentBid
+				-- sits one increment below it by design).
 				who = "no bids"
+				refs.BidLabel.Text = "$" .. formatMoney(snapshot.startingBid or snapshot.currentBid or 0) .. " · " .. who
 			else
 				who = tag(who, snapshot.bidderType)
+				refs.BidLabel.Text = "$" .. formatMoney(snapshot.currentBid or 0) .. " · " .. who
 			end
-			refs.BidLabel.Text = "$" .. formatMoney(snapshot.currentBid or 0) .. " · " .. who
 		elseif state == "Inspection" then
-			refs.BidLabel.Text = "Starts at $" .. formatMoney(snapshot.currentBid or 0)
+			refs.BidLabel.Text = "Starts at $" .. formatMoney(snapshot.startingBid or snapshot.currentBid or 0)
 		else
 			refs.BidLabel.Text = "Next auction soon"
 		end

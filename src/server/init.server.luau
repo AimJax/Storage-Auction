@@ -19,6 +19,7 @@ local PlayerStatsService = require(script.PlayerStatsService)
 local PlotService = require(script.PlotService)
 local WarehouseService = require(script.WarehouseService)
 local DebtService = require(script.DebtService)
+local RemoteGuardService = require(script.RemoteGuardService)
 
 -- 1) Remotes (created at runtime so Studio needs zero manual setup).
 local function ensureRemotes()
@@ -52,7 +53,15 @@ local function ensureRemotes()
 		{ GameConfig.RemoteNames.DebtChanged, "RemoteEvent" },
 	}
 	for _, d in ipairs(defs) do
-		if not folder:FindFirstChild(d[1]) then
+		local existing = folder:FindFirstChild(d[1])
+		-- Validate CLASS as well as name: a stale wrong-class instance
+		-- under SA_Remotes would otherwise break invokes silently.
+		if existing and not existing:IsA(d[2]) then
+			warn("[SA] Replacing wrong-class remote '" .. d[1] .. "' (expected " .. d[2] .. ").")
+			existing:Destroy()
+			existing = nil
+		end
+		if not existing then
 			local inst = Instance.new(d[2])
 			inst.Name = d[1]
 			inst.Parent = folder
@@ -94,6 +103,7 @@ AuctionService.Init({
 	DebtService = DebtService,
 	WarehouseService = WarehouseService,
 	PlayerDataService = PlayerDataService,
+	RemoteGuardService = RemoteGuardService,
 })
 
 -- 4b) Runtime ATM loans/debt/recovery (no persistence in Stage 5A).
@@ -101,6 +111,7 @@ DebtService.Init({
 	EconomyService = EconomyService,
 	PlayerStatsService = PlayerStatsService,
 	PlayerDataService = PlayerDataService,
+	RemoteGuardService = RemoteGuardService,
 	Remotes = remotes,
 	ATMPrompt = mapHandles.ATM,
 })
@@ -110,6 +121,7 @@ DisplayService.Init({
 	InventoryService = InventoryService,
 	WarehouseService = WarehouseService,
 	PlayerDataService = PlayerDataService,
+	RemoteGuardService = RemoteGuardService,
 	Remotes = remotes,
 })
 PlayerStatsService.Init({
@@ -132,6 +144,8 @@ WarehouseService.Init({
 	PlayerStatsService = PlayerStatsService,
 	InventoryService = InventoryService,
 	PlayerDataService = PlayerDataService,
+	AuctionService = AuctionService,
+	DisplayService = DisplayService,
 	Remotes = remotes,
 })
 
@@ -193,6 +207,7 @@ local function onPlayerRemoving(player)
 	EconomyService.ClearPlayer(player)
 	DebtService.ClearPlayer(player)
 	WarehouseService.ClearPlayer(player)
+	RemoteGuardService.ClearPlayer(player)
 	PlayerDataService.ClearPlayer(player)
 end
 

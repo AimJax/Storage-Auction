@@ -23,6 +23,7 @@ local DisplayService = {}
 local InventoryService = nil
 local WarehouseService = nil
 local PlayerDataService = nil
+local RemoteGuardService = nil
 local Remotes = nil
 
 -- [UserId] = { [slotIndex] = InstanceId }. Identity only — item fields are
@@ -139,11 +140,15 @@ function DisplayService.Init(deps)
 	InventoryService = deps.InventoryService
 	WarehouseService = deps.WarehouseService
 	PlayerDataService = deps.PlayerDataService
+	RemoteGuardService = deps.RemoteGuardService
 	Remotes = deps.Remotes
 
 	local displayItem = Remotes:FindFirstChild(GameConfig.RemoteNames.DisplayItem)
 	if displayItem and displayItem:IsA("RemoteFunction") then
 		displayItem.OnServerInvoke = function(player, instanceId, slotIndex)
+			if RemoteGuardService and not RemoteGuardService.Check(player, "DisplayItem") then
+				return { ok = false, result = "Too fast. Try again." }
+			end
 			local ok, result = DisplayService.AssignDisplay(player, instanceId, slotIndex)
 			return { ok = ok, result = result }
 		end
@@ -151,6 +156,9 @@ function DisplayService.Init(deps)
 	local removeDisplay = Remotes:FindFirstChild(GameConfig.RemoteNames.RemoveDisplay)
 	if removeDisplay and removeDisplay:IsA("RemoteFunction") then
 		removeDisplay.OnServerInvoke = function(player, instanceId)
+			if RemoteGuardService and not RemoteGuardService.Check(player, "RemoveDisplay") then
+				return { ok = false, result = "Too fast. Try again." }
+			end
 			local ok, result = DisplayService.RemoveDisplay(player, instanceId)
 			return { ok = ok, result = result }
 		end
@@ -281,8 +289,11 @@ end
 -- inventory, and no id twice. Proxies rebuild only when a warehouse exists
 -- (plot claim refreshes them separately). Returns count kept.
 function DisplayService.RestoreAssignments(player, map)
+	if not player then
+		return 0
+	end
 	assignments[player.UserId] = {}
-	if not player or typeof(map) ~= "table" then
+	if typeof(map) ~= "table" then
 		return 0
 	end
 	local maxSlots = WarehouseService and WarehouseService.GetDisplaySlotCount(player) or GameConfig.DisplaySlotCount
@@ -292,8 +303,13 @@ function DisplayService.RestoreAssignments(player, map)
 	end
 	local kept = {}
 	local count = 0
-	for slotIndex, instanceId in pairs(map) do
-		slotIndex = math.floor(tonumber(slotIndex) or 0)
+	for rawSlot, instanceId in pairs(map) do
+		local numSlot = tonumber(rawSlot)
+		-- Strictly integer slot indices only (1.5 must not become 1).
+		if numSlot == nil or math.floor(numSlot) ~= numSlot then
+			continue
+		end
+		local slotIndex = numSlot
 		if slotIndex >= 1 and slotIndex <= maxSlots
 			and typeof(instanceId) == "string"
 			and owned[instanceId] and not kept[instanceId]

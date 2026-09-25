@@ -23,9 +23,8 @@ local function blankSnapshot()
 end
 
 -- One snapshot per session; the server broadcasts each with its unitIndex.
--- SESSION_COUNT is the only knob for adding a unit client-side: tables are
--- built by loop and all scans below iterate 1..SESSION_COUNT.
-local SESSION_COUNT = 3
+-- Session count derives from config (UnitTiers) so map and client agree.
+local SESSION_COUNT = #GameConfig.UnitTiers
 local snapshots = {}
 local prevStates = {}
 local lastSeenBid = {}
@@ -45,8 +44,16 @@ local displayState = { slots = {} }
 
 local function getRemote(name, className)
 	local r = remotes:FindFirstChild(name)
+	if r and className and not r:IsA(className) then
+		warn("[SA] Remote '" .. name .. "' has wrong class; waiting for the right one.")
+		r = nil
+	end
 	if not r then
 		r = remotes:WaitForChild(name, 10)
+		if r and className and not r:IsA(className) then
+			warn("[SA] Remote '" .. name .. "' has wrong class after wait.")
+			return nil
+		end
 	end
 	return r
 end
@@ -181,13 +188,12 @@ function AuctionClient.Start()
 			if payload.closeReveal then
 				UIController.HideReveal()
 			end
-			if inRadius then
-				UIController.ShowToast(tostring(payload.text))
-			end
+			-- Server-targeted notices (plot/warehouse/timeout/auto-sale)
+			-- always display; only ambient auction-chatter toasts stay
+			-- radius-gated (handled at their own call sites).
+			UIController.ShowToast(tostring(payload.text))
 		else
-			if inRadius then
-				UIController.ShowToast(tostring(payload))
-			end
+			UIController.ShowToast(tostring(payload))
 		end
 	end)
 
@@ -222,8 +228,9 @@ function AuctionClient.Start()
 		end
 	end)
 
-	-- Sell / Keep (both auto-close the reveal panel; resolve in the
-	-- session that produced the reveal)
+	-- Sell / Keep (resolve in the session that produced the reveal).
+	-- Reveal closes ONLY on success; a failed Sell/Keep leaves it open so
+	-- the pending decision is never stranded by a dismiss.
 	refs.SellButton.MouseButton1Click:Connect(function()
 		local instanceId = UIController.GetRevealInstanceId()
 		if not instanceId then
@@ -234,8 +241,8 @@ function AuctionClient.Start()
 		local ok, res = pcall(function()
 			return fn:InvokeServer(unit, instanceId)
 		end)
-		UIController.HideReveal()
 		if ok and typeof(res) == "table" and res.ok then
+			UIController.HideReveal()
 			UIController.ShowToast("Sold for $" .. formatMoney(res.result) .. "!")
 		else
 			local msg = if (ok and typeof(res) == "table") then tostring(res.result) else "Sell failed"
@@ -466,7 +473,7 @@ function AuctionClient.Start()
 	getRemote(GameConfig.RemoteNames.InventoryChanged, "RemoteEvent").OnClientEvent:Connect(function()
 		refreshWarehouseIfOpen()
 	end)
-	-- Local proximity check across BOTH sessions (UX only; server validates).
+	-- Local proximity check across ALL sessions (UX only; server validates).
 	-- Picks the nearest BidCenter inside its radius; overlapping zones
 	-- resolve deterministically to the nearer unit (ties keep unit 1).
 	-- Runs on a slow tick so walking between units updates the HUD without
