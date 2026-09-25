@@ -162,26 +162,34 @@ local lifecycleBusy = {} -- [UserId] = true while a durable save is in flight
 local lifecycleDone = {} -- [UserId] = true once durably saved (skip repeats)
 local function acquireLifecycle(userId)
 	local deadline = os.clock() + 5
-	while lifecycleBusy[userId] and os.clock() < deadline do
+	while lifecycleBusy[userId] do
+		if os.clock() >= deadline then
+			return false -- still busy: never force-acquire another save's lock
+		end
 		task.wait(0.1)
 	end
 	lifecycleBusy[userId] = true
+	return true
 end
 local function releaseLifecycle(userId)
 	lifecycleBusy[userId] = nil
 end
 -- The ONLY durable-save path: resolve pending Sell/Keep value exactly once
 -- (idempotent — second call finds nothing pending), then snapshot + save.
--- Returns after THIS player's save attempt completes.
+-- lifecycleDone is set ONLY when Save reports success; failures release the
+-- lock unsaved so a later caller retries against already-resolved state.
+-- Every exit after acquisition releases. Returns save success.
 local function savePlayerDurably(player)
 	if not player then
 		return false
 	end
 	local id = player.UserId
 	if lifecycleDone[id] then
-		return true -- already durably saved; never a stale second save
+		return true
 	end
-	acquireLifecycle(id)
+	if not acquireLifecycle(id) then
+		return false
+	end
 	if lifecycleDone[id] then
 		-- Lost the race while waiting: the winner already saved post-resolve
 		-- state, so there is nothing stale left to write.
@@ -189,10 +197,12 @@ local function savePlayerDurably(player)
 		return true
 	end
 	AuctionService.ResolvePendingForPlayer(player)
-	PlayerDataService.Save(player)
-	lifecycleDone[id] = true
+	local saved = PlayerDataService.Save(player)
+	if saved then
+		lifecycleDone[id] = true
+	end
 	releaseLifecycle(id)
-	return true
+	return saved == true
 end
 local function onPlayerAdded(player)
 	if not player then
@@ -239,7 +249,11 @@ local function onPlayerRemoving(player)
 	-- save FIRST while every service still holds runtime state (debt,
 	-- inventory, wins, cash, level, displays), and only then clear. The
 	-- shared durable path serializes with any concurrent BindToClose save.
-	savePlayerDurably(player)
+	-- A failed save warns and still clears: the player is already leaving
+	-- and the server cannot hold them (PlayerDataService already retried).
+	if not savePlayerDurably(player) then
+		warn("[SA] Final save failed for " .. tostring(player.Name) .. "; runtime state will clear after bounded attempts.")
+	end
 	PlotService.ReleasePlot(player)
 	AuctionService.ClearPlayer(player)
 	DisplayService.ClearPlayer(player)

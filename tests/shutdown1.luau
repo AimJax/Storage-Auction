@@ -35,9 +35,11 @@ local runqueue = {}
 task = {}
 task.spawn = function(fn, ...)
 	local args = { ... }
+	-- NOTE: at=vclock (never 0): pumpTo seeks the minimum due time, so an
+	-- absolute-zero stamp would rewind the virtual clock backwards.
 	table.insert(runqueue, { co = coroutine.create(function()
 		fn(table.unpack(args))
-	end), at = 0 })
+	end), at = vclock })
 end
 task.wait = function(t)
 	t = tonumber(t) or 0
@@ -426,10 +428,14 @@ local lifecycleBusy = {}
 local lifecycleDone = {}
 local function acquireLifecycle(userId)
 	local deadline = os.clock() + 5
-	while lifecycleBusy[userId] and os.clock() < deadline do
+	while lifecycleBusy[userId] do
+		if os.clock() >= deadline then
+			return false
+		end
 		task.wait(0.1)
 	end
 	lifecycleBusy[userId] = true
+	return true
 end
 local function releaseLifecycle(userId)
 	lifecycleBusy[userId] = nil
@@ -442,16 +448,20 @@ local function savePlayerDurably(player)
 	if lifecycleDone[id] then
 		return true
 	end
-	acquireLifecycle(id)
+	if not acquireLifecycle(id) then
+		return false
+	end
 	if lifecycleDone[id] then
 		releaseLifecycle(id)
 		return true
 	end
 	AuctionService.ResolvePendingForPlayer(player)
-	PlayerDataService.Save(player)
-	lifecycleDone[id] = true
+	local saved = PlayerDataService.Save(player)
+	if saved then
+		lifecycleDone[id] = true
+	end
 	releaseLifecycle(id)
-	return true
+	return saved == true
 end
 local function onPlayerAdded(player)
 	if bootstrapped[player.UserId] then
@@ -466,7 +476,9 @@ local function onPlayerRemoving(player)
 		return
 	end
 	bootstrapped[player.UserId] = nil
-	savePlayerDurably(player)
+	if not savePlayerDurably(player) then
+		warn("[SA] Final save failed for " .. tostring(player.Name) .. "; runtime state will clear after bounded attempts.")
+	end
 	PlotServiceRelease(player)
 	AuctionService.ClearPlayer(player)
 	DisplayService.ClearPlayer(player)
@@ -517,9 +529,26 @@ local function leave(P)
 		return not PlayerDataService.IsLoaded(P)
 	end)
 end
+-- Durable saves may yield (retry backoff); never call them bare at top
+-- level — drive them in a task and pump (mirrors Roblox threading).
+local function durable(P)
+	local result = nil
+	local finished = false
+	task.spawn(function()
+		result = savePlayerDurably(P)
+		finished = true
+	end)
+	pumpUntil(function()
+		return finished
+	end)
+	return result
+end
 
 local function snap(i)
 	return AuctionService.GetSnapshot().auctions[i]
+end
+local function cashOf(p)
+	return EconomyService.GetCash(p)
 end
 local function winBudget(P)
 	pumpUntil(function()
@@ -683,7 +712,128 @@ do
 	playersById[708] = nil
 end
 
-check(#schedErrors == 0, "S8 no scheduler errors")
+-- ================= S8: failed first save does NOT mark done =================
+do
+	local P = mkPlayer("FailFiona", 709)
+	onPlayerAdded(P)
+	EconomyService.SetCash(P, 100000)
+	winBudget(P)
+	openBox1(P) -- pending live
+	storeFail.set = true -- every SetAsync attempt fails (after retries)
+	local r1 = durable(P)
+	check(r1 == false, "S8 first save reports failure")
+	check(lifecycleDone[P.UserId] ~= true, "S8 done NOT set on failure")
+	check(lifecycleBusy[P.UserId] == nil, "S8 lock released on failure")
+	check(storeData["player_709"] == nil, "S8 nothing persisted")
+	-- pending was still consumed exactly once (value now in inventory)
+	check(#InventoryService.GetItems(P) == 1, "S8 pending resolved despite save failure")
+	storeFail.set = false
+	playersById[709] = nil
+end
+
+-- ================= S9: retry after failure saves resolved state once =================
+do
+	local P = mkPlayer("RetryRex", 710)
+	onPlayerAdded(P)
+	EconomyService.SetCash(P, 100000)
+	winBudget(P)
+	openBox1(P)
+	storeFail.set = true
+	check(durable(P) == false, "S9 first attempt fails")
+	storeFail.set = false
+	check(durable(P) == true, "S9 retry succeeds")
+	local saved = storeData["player_710"]
+	check(saved ~= nil and #saved.Inventory == 1, "S9 resolved item saved once")
+	local count = 0
+	for _, e in ipairs(setJournal) do
+		if e.key == "player_710" then
+			count += 1
+		end
+	end
+	check(count == 1, "S9 exactly one successful write (got " .. count .. ")")
+	check(cashOf(P) >= 100000 - 5000, "S9 no duplicate sale proceeds")
+	playersById[710] = nil
+end
+
+-- ================= S10: full-inventory failure then success =================
+do
+	local P = mkPlayer("FullFaye2", 712)
+	onPlayerAdded(P)
+	EconomyService.SetCash(P, 100000)
+	for i = 1, 25 do
+		InventoryService.AddItem(P, { InstanceId = "s10_" .. i, ItemId = "old_lamp", Name = "Old Lamp", BaseValue = 40, ModelKey = "OldLamp", Rarity = "Common", Condition = 50, ConditionName = "Used", FinalValue = 60, Modifiers = {} })
+	end
+	winBudget(P)
+	openBox1(P)
+	storeFail.set = true
+	check(durable(P) == false, "S10 first save fails")
+	storeFail.set = false
+	check(durable(P) == true, "S10 retry succeeds")
+	local saved = storeData["player_712"]
+	check(saved ~= nil and #saved.Inventory == 25, "S10 no over-cap keep")
+	-- Single auto-sale exactly once: runtime cash stable across the retry,
+	-- and the save matches runtime (no duplicate proceeds on second save).
+	check(saved.Cash == cashOf(P), "S10 save matches runtime cash (no double-sell)")
+	check(saved.Cash > 100000 - 5000, "S10 auto-sale value preserved")
+	playersById[712] = nil
+end
+
+-- ================= S11: lock timeout never force-acquires =================
+do
+	local P = mkPlayer("LockLars", 713)
+	onPlayerAdded(P)
+	EconomyService.SetCash(P, 5000)
+	lifecycleBusy[P.UserId] = true -- simulate a stuck first save
+	local t0 = vclock
+	local r = durable(P)
+	local elapsed = vclock - t0
+	check(r == false, "S11 timed-out acquire returns false")
+	check(lifecycleBusy[P.UserId] == true, "S11 lock still owned by first caller")
+	check(elapsed >= 5 and elapsed < 8, "S11 waited bounded window (got " .. elapsed .. "s)")
+	local writes = 0
+	for _, e in ipairs(setJournal) do
+		if e.key == "player_713" then
+			writes += 1
+		end
+	end
+	check(writes == 0, "S11 no second save began")
+	lifecycleBusy[P.UserId] = nil -- release the simulated stuck save
+	check(durable(P) == true, "S11 save works after release")
+	playersById[713] = nil
+end
+
+-- ================= S12: success marks done, second call skips =================
+do
+	local P = mkPlayer("DoneDora", 714)
+	onPlayerAdded(P)
+	EconomyService.SetCash(P, 4200)
+	check(durable(P) == true, "S12 first save succeeds")
+	local writes1 = 0
+	for _, e in ipairs(setJournal) do
+		if e.key == "player_714" then
+			writes1 += 1
+		end
+	end
+	check(durable(P) == true, "S12 second call reports success")
+	local writes2 = 0
+	for _, e in ipairs(setJournal) do
+		if e.key == "player_714" then
+			writes2 += 1
+		end
+	end
+	check(writes1 == 1 and writes2 == 1, "S12 exactly one write")
+	playersById[714] = nil
+end
+
+-- ================= S13: locks release on every path =================
+do
+	for id, _ in pairs(lifecycleBusy) do
+		check(false, "S13 stuck lock for user " .. tostring(id))
+	end
+	check(true, "S13 no stuck lifecycleBusy entries")
+end
+
+check(#schedErrors == 0, "S14 no scheduler errors")
 print(string.format("schedErrors=%d failures=%d", #schedErrors, failures))
 if failures > 0 then
 	print("SHUTDOWN TEST: FAILED")
